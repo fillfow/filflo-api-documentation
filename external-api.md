@@ -20,7 +20,7 @@ The Customer Order API lets B2B customers check order status, confirm delivery, 
 All endpoints below are under:
 
 ```
-https://<your-domain>/api/v1
+https://app.backend.filflo.in/api/v1
 ```
 
 ## Authentication
@@ -85,7 +85,7 @@ Returns the current order status and relevant tracking fields.
 ```bash
 curl -s \
   -H "X-API-Key: flk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
-  "https://<your-domain>/api/v1/external/orders/ORD-001/status"
+  "https://app.backend.filflo.in/api/v1/external/orders/ORD-001/status"
 ```
 
 #### Response (200)
@@ -153,7 +153,7 @@ curl -s -X POST \
   -H "Content-Type: application/json" \
   -H "X-API-Key: flk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
   -d '{"deliveryDate":"2026-02-15T10:30:00.000Z","proofOfDelivery":"received_by_store_manager"}' \
-  "https://<your-domain>/api/v1/external/orders/ORD-001/confirm-delivery"
+  "https://app.backend.filflo.in/api/v1/external/orders/ORD-001/confirm-delivery"
 ```
 
 #### Response (200)
@@ -190,7 +190,7 @@ Requires scope: `orders.invoice.read`
 curl -s \
   -H "X-API-Key: flk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
   --output invoice.pdf \
-  "https://<your-domain>/api/v1/external/orders/ORD-001/invoice"
+  "https://app.backend.filflo.in/api/v1/external/orders/ORD-001/invoice"
 ```
 
 #### Response (200)
@@ -247,7 +247,7 @@ curl -s -X POST \
   -H "Content-Type: application/json" \
   -H "X-API-Key: flk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
   -d '{"lineItems":[{"skuCode":"WG-PEN-400","quantity":95}]}' \
-  "https://<your-domain>/api/v1/external/orders/ORD-001/grn"
+  "https://app.backend.filflo.in/api/v1/external/orders/ORD-001/grn"
 ```
 
 #### Response (200)
@@ -396,7 +396,7 @@ Your platform can push order status changes back to FilFlo using a signed webhoo
 ### Endpoint
 
 ```
-POST https://api.filflo.com/api/v1/integrations/webhooks/<webhookKey>
+POST https://app.backend.filflo.in/api/v1/integrations/webhooks/<webhookKey>
 ```
 
 Your `webhookKey` is assigned during onboarding (e.g. `atlas-default`). Use it exactly as provided.
@@ -515,7 +515,7 @@ FilFlo does not provide a sandbox environment at this time. To test end-to-end:
 1. Use a tool like [webhook.site](https://webhook.site) or [ngrok](https://ngrok.com) to expose a local endpoint for outbound testing
 2. Share the URL with your FilFlo integration contact to point the outbound plugin at it
 3. Trigger a test order status change in the FilFlo staging workspace
-4. For inbound testing, send signed requests to the staging webhook endpoint (`api-staging.filflo.com`)
+4. For inbound testing, send signed requests to the production webhook endpoint (`app.backend.filflo.in`)
 
 **Signature verification tip:** If you're getting `401` responses on inbound calls, double-check that:
 - You're signing the raw body bytes, not a re-serialised version
@@ -537,7 +537,7 @@ Share the following with your FilFlo integration contact to complete setup:
 
 ## Support
 
-For integration questions, reach out to your FilFlo technical contact or email **integrations@filflo.com**.
+For integration questions, reach out to your FilFlo technical contact or email **shubham@filflo.in**.
 
 Include the following in any support request:
 - Your `webhookKey`
