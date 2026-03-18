@@ -207,6 +207,19 @@ Content-Disposition: attachment; filename="invoice-ORD-001.pdf"
 - `404` — Order not found (or not accessible for this API key)
 - `409` — Order has not been invoiced yet
 
+### Invoice Lifecycle
+
+Invoicing is handled **internally by FilFlo** after an order is picked — external partners do not trigger invoicing via API.
+
+Typical flow:
+
+1. Your system marks the order as picked (via inbound webhook — see Part 2)
+2. FilFlo generates the tax invoice (including IRN/e-invoice where applicable)
+3. If an outbound webhook is configured for the `picked → invoiced` transition, FilFlo notifies your endpoint
+4. You download the PDF via `GET /external/orders/:orderId/invoice`
+
+**Best practice:** Subscribe to the outbound webhook for the `picked → invoiced` event, then fetch the PDF when notified. If you poll instead, the endpoint returns `409` until the invoice is ready.
+
 ### 4) Submit GRN
 
 `POST /external/orders/:orderId/grn`
@@ -484,6 +497,64 @@ Statuses outside this mapping are rejected. If you need additional statuses mapp
 FilFlo also validates that the mapped status represents a **valid transition** from the order's current state. Pushing a status that would result in an invalid transition (e.g. moving a `picked` order directly to `delivered` without `in_transit`) is rejected with a `409` response and logged.
 
 > **Note:** If the order is already at the target status, or has already advanced past it (e.g. order is `delivered` and you send `in_transit`), FilFlo returns `200` and silently accepts the event without changing the order. This makes it safe to replay events without causing errors.
+
+### Passing Item Details (Fulfilled Quantities)
+
+When `lineItems` is configured in your connector's payload map (standard for production integrations), the inbound webhook payload **must** include an `items` array for every status transition. This is how you communicate fulfilled quantities — i.e. how many units of each SKU were actually packed/shipped.
+
+#### Field Reference
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `items` | array | Yes | Array of per-SKU quantities |
+| `items[].skuCode` | string | Yes | SKU code matching a line item on the order |
+| `items[].quantity` | number | Yes | Fulfilled quantity (≥ 0, ≤ approved quantity) |
+
+#### Validation Rules
+
+- **All SKUs required:** The `items` array must include every SKU on the order. Partial submissions are rejected (`400`).
+- **No duplicates:** Each `skuCode` may appear only once. Duplicate entries are rejected (`400`).
+- **Quantity ceiling:** `quantity` must not exceed the order's approved quantity for that SKU. Exceeding it is rejected (`400`).
+- **Empty or missing array:** If `items` is missing, null, or an empty array, the request is rejected (`400`).
+
+#### When Fulfilled Quantities Are Applied
+
+Fulfilled quantities are recorded during the `approved → picked` transition specifically. If the fulfilled quantity is less than the approved quantity for a SKU, FilFlo automatically records the reason as `short_supply`.
+
+For transitions after `picked` (e.g. `picked → in_transit`), the items array is still required for validation, but quantities are not re-applied — the values from the picking step are preserved.
+
+#### Example: Packed Webhook with Items
+
+```json
+{
+  "orderId": "ORD-2024-00123",
+  "status": "packed",
+  "eventId": "evt_pack_456",
+  "occurredAt": "2024-11-15T09:00:00.000Z",
+  "items": [
+    { "skuCode": "WG-PEN-400", "quantity": 95 },
+    { "skuCode": "WG-PEN-200", "quantity": 50 }
+  ]
+}
+```
+
+#### Example curl — Inbound Webhook with Items and HMAC Signing
+
+```bash
+# 1. Build the payload
+PAYLOAD='{"orderId":"ORD-2024-00123","status":"packed","eventId":"evt_pack_456","occurredAt":"2024-11-15T09:00:00.000Z","items":[{"skuCode":"WG-PEN-400","quantity":95},{"skuCode":"WG-PEN-200","quantity":50}]}'
+
+# 2. Compute HMAC-SHA256 signature
+SECRET="your_shared_secret"
+SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')"
+
+# 3. Send the request
+curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -H "x-signature: $SIGNATURE" \
+  -d "$PAYLOAD" \
+  "https://app.backend.filflo.in/api/v1/integrations/webhooks/atlas-default"
+```
 
 ### Response Format
 
