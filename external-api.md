@@ -180,7 +180,7 @@ curl -s -X POST \
 
 `GET /external/orders/:orderId/invoice`
 
-Downloads the tax invoice PDF for an order. Only available once the order has reached `picked` or `invoiced` status.
+Downloads the tax invoice PDF for an order. Only available for orders that have been invoiced (have a generated invoice).
 
 Requires scope: `orders.invoice.read`
 
@@ -205,7 +205,7 @@ Content-Disposition: attachment; filename="invoice-ORD-001.pdf"
 #### Errors
 
 - `404` — Order not found (or not accessible for this API key)
-- `409` — Order is not in `picked` or `invoiced` state
+- `409` — Order has not been invoiced yet
 
 ### 4) Submit GRN
 
@@ -375,13 +375,14 @@ The token value is set during plugin configuration. Validate this token on every
 
 ### Reliability and Retries
 
-If your endpoint is unavailable or returns a server error, FilFlo retries automatically:
+If your endpoint is unavailable or returns a server error, FilFlo retries automatically. The default configuration allows **3 total attempts** (1 initial + 2 retries):
 
 | Attempt | Delay after previous failure |
 |---|---|
 | 1st retry | 30 seconds |
 | 2nd retry | 2 minutes |
-| 3rd retry | 10 minutes |
+
+After all attempts are exhausted, the event is moved to a dead-letter queue for manual review. The number of attempts and backoff delays are configurable per connector.
 
 Retries are triggered only for transient failures: timeouts, `408 Request Timeout`, `429 Too Many Requests`, and any `5xx` response. Permanent errors (`4xx` except 408/429) are **not** retried.
 
@@ -418,10 +419,10 @@ Send a JSON payload containing the fields agreed upon during setup. A typical sh
 |---|---|---|
 | `orderId` | Yes | FilFlo order identifier |
 | `status` | Yes | Your platform's status string (see Status Mapping below) |
-| `eventId` | Yes | A unique ID for this event; used for deduplication |
-| `occurredAt` | Yes | ISO 8601 timestamp when the event occurred |
+| `eventId` | No | A unique ID for this event; used for deduplication. If omitted, FilFlo auto-generates one from a hash of the webhook key, order ID, status, and request body |
+| `occurredAt` | No | ISO 8601 timestamp when the event occurred |
 
-> FilFlo deduplicates by `(connectorId, eventId)`. Re-sending the same `eventId` for the same connector is safe and will be silently ignored.
+> FilFlo deduplicates by `(pluginId, eventId)`. Re-sending the same `eventId` for the same connector returns `200` with `"idempotent": true` and is safe to ignore.
 
 ### Signing Requests (HMAC-SHA256)
 
@@ -480,18 +481,45 @@ Your platform's status strings are mapped to FilFlo's internal order statuses. T
 
 Statuses outside this mapping are rejected. If you need additional statuses mapped, contact your FilFlo integration contact.
 
-FilFlo also validates that the mapped status represents a **valid transition** from the order's current state. Pushing a status that would result in an invalid transition (e.g. moving a delivered order back to picked) is rejected with a `422` response and logged.
+FilFlo also validates that the mapped status represents a **valid transition** from the order's current state. Pushing a status that would result in an invalid transition (e.g. moving a `picked` order directly to `delivered` without `in_transit`) is rejected with a `409` response and logged.
+
+> **Note:** If the order is already at the target status, or has already advanced past it (e.g. order is `delivered` and you send `in_transit`), FilFlo returns `200` and silently accepts the event without changing the order. This makes it safe to replay events without causing errors.
+
+### Response Format
+
+Successful responses return JSON with `"ok": true` and additional fields:
+
+**Normal success** (order status updated):
+
+```json
+{
+  "ok": true,
+  "idempotent": false,
+  "receiptId": "6651a...",
+  "order": { "orderId": "ORD-001", "status": "in_transit", "..." : "..." }
+}
+```
+
+**Idempotent success** (duplicate `eventId`, or order already at/past target status):
+
+```json
+{
+  "ok": true,
+  "idempotent": true,
+  "receiptId": "6651a..."
+}
+```
 
 ### Response Codes
 
 | Code | Meaning |
 |---|---|
-| `200` | Event accepted and order status updated |
+| `200` | Event accepted and order status updated. Also returned for duplicate `eventId` (with `"idempotent": true`) and when the order is already at or past the target status |
 | `400` | Malformed request body or missing required fields |
 | `401` | Invalid or missing HMAC signature |
+| `403` | Webhook exists but is currently disabled |
 | `404` | `webhookKey` not recognised |
-| `409` | `eventId` already processed (duplicate — safe to ignore) |
-| `422` | Status transition not allowed for this order's current state |
+| `409` | Status transition not allowed for this order's current state |
 | `5xx` | FilFlo-side error — retry with exponential back-off |
 
 ---
