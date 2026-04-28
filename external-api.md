@@ -4,7 +4,7 @@
 
 This document covers two integration surfaces:
 
-- **Part 1 — Customer Order API:** REST endpoints for checking order status, confirming delivery, submitting GRN, and downloading invoices.
+- **Part 1 — Customer Order API:** REST endpoints for checking order status, confirming delivery, submitting GRN, downloading invoices, and listing/exporting invoice reports.
 - **Part 2 — Order Hook Integration:** Bidirectional webhook system for staying in sync with order lifecycle events in real time.
 
 ---
@@ -51,6 +51,7 @@ Required scopes per endpoint:
 | `orders.confirm_delivery` | `POST /external/orders/:orderId/confirm-delivery` |
 | `orders.grn.write` | `POST /external/orders/:orderId/grn` |
 | `orders.invoice.read` | `GET /external/orders/:orderId/invoice` |
+| `reports.invoices.read` | `GET /external/reports/invoices`, `GET /external/reports/invoices/export/header`, `GET /external/reports/invoices/export/line` |
 
 ## Content Type
 
@@ -282,6 +283,139 @@ curl -s -X POST \
   }
 }
 ```
+
+### 5) List Invoices
+
+`GET /external/reports/invoices`
+
+Returns a JSON list of invoices for the workspace, with summary totals. Customer-scoped API keys see only their own customer's invoices.
+
+Requires scope: `reports.invoices.read`
+
+#### Query parameters
+
+| Param | Required | Description |
+|---|---|---|
+| `startDate` | optional | ISO 8601 date. Filter by `invoiceDate >= startDate`. |
+| `endDate` | optional | ISO 8601 date. Filter by `invoiceDate < endDate + 1 day`. |
+| `customerId` | optional (workspace keys only) | MongoDB ObjectId of a customer. Ignored on customer-scoped keys (always clamped to the key's customer). |
+| `status` | optional | Order status — one of `open`, `approved`, `picked`, `invoiced`, `in_transit`, `delivered`, `grn_entered`, `rto`. |
+| `irnStatus` | optional | One of `active`, `cancelled`, `failed`. |
+
+The response is capped at the **2,000 most recent invoices** (sorted by `invoiceDate` desc). Use the export endpoints below for larger or full-fidelity datasets.
+
+#### Example
+
+```bash
+curl -s \
+  -H "X-API-Key: flk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+  "https://app.backend.filflo.in/api/v1/external/reports/invoices?startDate=2026-04-01&endDate=2026-04-30"
+```
+
+#### Response (200)
+
+```json
+{
+  "items": [
+    {
+      "_id": "65...",
+      "orderId": "ORD-001",
+      "status": "invoiced",
+      "invoiceId": "INV-2026-0001",
+      "invoiceDate": "2026-04-12T00:00:00.000Z",
+      "orderReceivedDate": "2026-04-10T00:00:00.000Z",
+      "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01" },
+      "irnDetails": { "irn": "...", "ackNo": "...", "ackDt": "...", "status": "active" },
+      "irnStatus": "active",
+      "gstAmount": 1800.0,
+      "ewbNo": "EWB-...",
+      "invoiceValue": 11800.0
+    }
+  ],
+  "summary": {
+    "totalInvoices": 1,
+    "totalInvoiceValue": 11800.0,
+    "averageInvoiceValue": 11800.0,
+    "totalGSTAmount": 1800.0
+  }
+}
+```
+
+### 6) Export Invoices — Header CSV
+
+`GET /external/reports/invoices/export/header`
+
+Streams a CSV with **one row per invoice** including warehouse, dates, IRN/e-way bill numbers, customer + bill-from addresses, totals, and ordered-vs-fulfilled-vs-GRN reconciliation columns.
+
+Requires scope: `reports.invoices.read`
+
+#### Query parameters
+
+`startDate` and `endDate` are **required** (ISO 8601). The span between them must not exceed **90 days**.
+
+`customerId`, `status`, `irnStatus` accept the same values as `GET /external/reports/invoices`.
+
+#### Example
+
+```bash
+curl -s \
+  -H "X-API-Key: flk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+  --output invoices-header.csv \
+  "https://app.backend.filflo.in/api/v1/external/reports/invoices/export/header?startDate=2026-04-01&endDate=2026-04-30"
+```
+
+#### Response (200)
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="invoices-header-<timestamp>.csv"
+```
+
+Columns (in order):
+
+`Warehouse, PO Date, Appointment Date, PO Expiry Date, Punch Date, Invoice Date, Dispatch Date, Delivery Date, Voucher Type, PO Number/Order No, Order Status, Order Remarks, Channel, Invoice Number, IRN Number, IRN Date, Acknowledgement Number, Acknowledgement Date, Eway Bill Number, Total Invoice Taxable Value, Total Invoice Amount With Tax, Customer, Customer GST, Shipping Address, Billing Address, State, City, Pincode, Mode of Transport, Carrier, Tracking Number, Tracking Link, Box Count, Bill From, Bill From GST, Bill From Address, Ship From, Distinct SKU - Ordered, Qty Ordered, Distinct SKU - Approved, Qty Approved, Distinct SKU - Fulfilled/Dispatched, Qty Fulfilled / Dispatched, Distinct SKU - GRN, Qty GRN, Short Fulfilled Quantity (SKU), Short Fulfilled Quantity (Units), Short GRN Quantity (SKU), Short GRN Quantity (Units), Ordered vs Approved % (SKU), Ordered vs Approved % (Qty), Approved vs Fulfilled % (SKU), Approved vs Fulfilled % (Qty), Ordered vs Fulfilled % (SKU), Ordered vs Fulfilled % (Qty), Fulfilled vs GRN % (SKU), Fulfilled vs GRN % (Qty), Ordered vs GRN % (SKU), Ordered vs GRN % (Qty), Approval Remarks, WH/Fulfillment Remarks, GRN Remarks`
+
+#### Errors
+
+- `400` — `startDate`/`endDate` missing, malformed, or span exceeds 90 days
+- `403` — API key missing the `reports.invoices.read` scope
+
+### 7) Export Invoices — Line CSV
+
+`GET /external/reports/invoices/export/line`
+
+Streams a CSV with **one row per SKU per invoice**, including per-line GST breakdowns (taxable amount, IGST/CGST/SGST), MRP, selling price, and margin.
+
+Requires scope: `reports.invoices.read`
+
+#### Query parameters
+
+Same as the header export — `startDate` and `endDate` required, span ≤ 90 days.
+
+#### Example
+
+```bash
+curl -s \
+  -H "X-API-Key: flk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+  --output invoices-line.csv \
+  "https://app.backend.filflo.in/api/v1/external/reports/invoices/export/line?startDate=2026-04-01&endDate=2026-04-30"
+```
+
+#### Response (200)
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="invoices-line-<timestamp>.csv"
+```
+
+Columns (in order):
+
+`Warehouse, PO Date, Appointment Date, PO Expiry Date, Punch Date, Invoice Date, Dispatch Date, Delivery Date, Voucher Type, PO Number, Invoice Number, IRN Number, IRN Date, Acknowledgement Number, Acknowledgement Date, Eway Bill Number, Total Invoice Taxable Value, Total Invoice Amount With Tax, Customer, Customer GST, Shipping Address, Billing Address, State, City, Pincode, Mode of Transport, Carrier, Tracking Number, Tracking Link, Box Count, Channel, Order Status, Bill From, Bill From GST, Bill From Address, Ship From, SKU Code, SKU Name, SKU HSN Code, Order Qty, Approved Qty, Fulfilled/Dispatched Qty, GRN Qty, Approval Remarks, WH/Fulfillment Remarks, GRN Remarks, MRP, MRP (Without tax), Selling Price, Selling Price (Without tax), Margin, GST Rate, Taxable Amount, IGST Amount, SGST Amount, CGST Amount, Total Item Value`
+
+#### Errors
+
+- `400` — `startDate`/`endDate` missing, malformed, or span exceeds 90 days
+- `403` — API key missing the `reports.invoices.read` scope
 
 ## Status Values
 
