@@ -324,7 +324,7 @@ curl -s \
       "invoiceId": "INV-2026-0001",
       "invoiceDate": "2026-04-12T00:00:00.000Z",
       "orderReceivedDate": "2026-04-10T00:00:00.000Z",
-      "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01" },
+      "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01", "tally_party_name": "Acme Foods Pvt. Ltd - MAH" },
       "irnDetails": { "irn": "...", "ackNo": "...", "ackDt": "...", "status": "active" },
       "irnStatus": "active",
       "gstAmount": 1800.0,
@@ -373,7 +373,7 @@ Content-Disposition: attachment; filename="invoices-header-<timestamp>.csv"
 
 Columns (in order):
 
-`Warehouse, PO Date, Appointment Date, PO Expiry Date, Punch Date, Invoice Date, Dispatch Date, Delivery Date, Voucher Type, PO Number/Order No, Order Status, Order Remarks, Channel, Invoice Number, IRN Number, IRN Date, Acknowledgement Number, Acknowledgement Date, Eway Bill Number, Total Invoice Taxable Value, Total Invoice Amount With Tax, Customer, Customer GST, Shipping Address, Billing Address, State, City, Pincode, Mode of Transport, Carrier, Tracking Number, Tracking Link, Box Count, Bill From, Bill From GST, Bill From Address, Ship From, Distinct SKU - Ordered, Qty Ordered, Distinct SKU - Approved, Qty Approved, Distinct SKU - Fulfilled/Dispatched, Qty Fulfilled / Dispatched, Distinct SKU - GRN, Qty GRN, Short Fulfilled Quantity (SKU), Short Fulfilled Quantity (Units), Short GRN Quantity (SKU), Short GRN Quantity (Units), Ordered vs Approved % (SKU), Ordered vs Approved % (Qty), Approved vs Fulfilled % (SKU), Approved vs Fulfilled % (Qty), Ordered vs Fulfilled % (SKU), Ordered vs Fulfilled % (Qty), Fulfilled vs GRN % (SKU), Fulfilled vs GRN % (Qty), Ordered vs GRN % (SKU), Ordered vs GRN % (Qty), Approval Remarks, WH/Fulfillment Remarks, GRN Remarks`
+`Warehouse, PO Date, Appointment Date, PO Expiry Date, Punch Date, Invoice Date, Dispatch Date, Delivery Date, Voucher Type, PO Number/Order No, Order Status, Order Remarks, Channel, Invoice Number, IRN Number, IRN Date, Acknowledgement Number, Acknowledgement Date, Eway Bill Number, Total Invoice Taxable Value, Total Invoice Amount With Tax, Customer, Customer GST, Shipping Address, Billing Address, State, City, Pincode, Mode of Transport, Carrier, Tracking Number, Tracking Link, Box Count, Bill From, Bill From GST, Bill From Address, Ship From, Distinct SKU - Ordered, Qty Ordered, Distinct SKU - Approved, Qty Approved, Distinct SKU - Fulfilled/Dispatched, Qty Fulfilled / Dispatched, Distinct SKU - GRN, Qty GRN, Short Fulfilled Quantity (SKU), Short Fulfilled Quantity (Units), Short GRN Quantity (SKU), Short GRN Quantity (Units), Ordered vs Approved % (SKU), Ordered vs Approved % (Qty), Approved vs Fulfilled % (SKU), Approved vs Fulfilled % (Qty), Ordered vs Fulfilled % (SKU), Ordered vs Fulfilled % (Qty), Fulfilled vs GRN % (SKU), Fulfilled vs GRN % (Qty), Ordered vs GRN % (SKU), Ordered vs GRN % (Qty), Approval Remarks, WH/Fulfillment Remarks, GRN Remarks, Tally Customer Name`
 
 #### Errors
 
@@ -410,7 +410,7 @@ Content-Disposition: attachment; filename="invoices-line-<timestamp>.csv"
 
 Columns (in order):
 
-`Warehouse, PO Date, Appointment Date, PO Expiry Date, Punch Date, Invoice Date, Dispatch Date, Delivery Date, Voucher Type, PO Number, Invoice Number, IRN Number, IRN Date, Acknowledgement Number, Acknowledgement Date, Eway Bill Number, Total Invoice Taxable Value, Total Invoice Amount With Tax, Customer, Customer GST, Shipping Address, Billing Address, State, City, Pincode, Mode of Transport, Carrier, Tracking Number, Tracking Link, Box Count, Channel, Order Status, Bill From, Bill From GST, Bill From Address, Ship From, SKU Code, SKU Name, SKU HSN Code, Order Qty, Approved Qty, Fulfilled/Dispatched Qty, GRN Qty, Approval Remarks, WH/Fulfillment Remarks, GRN Remarks, MRP, MRP (Without tax), Selling Price, Selling Price (Without tax), Margin, GST Rate, Taxable Amount, IGST Amount, SGST Amount, CGST Amount, Total Item Value`
+`Warehouse, PO Date, Appointment Date, PO Expiry Date, Punch Date, Invoice Date, Dispatch Date, Delivery Date, Voucher Type, PO Number, Invoice Number, IRN Number, IRN Date, Acknowledgement Number, Acknowledgement Date, Eway Bill Number, Total Invoice Taxable Value, Total Invoice Amount With Tax, Customer, Customer GST, Shipping Address, Billing Address, State, City, Pincode, Mode of Transport, Carrier, Tracking Number, Tracking Link, Box Count, Channel, Order Status, Bill From, Bill From GST, Bill From Address, Ship From, SKU Code, SKU Name, SKU HSN Code, Order Qty, Approved Qty, Fulfilled/Dispatched Qty, GRN Qty, Approval Remarks, WH/Fulfillment Remarks, GRN Remarks, MRP, MRP (Without tax), Selling Price, Selling Price (Without tax), Margin, GST Rate, Taxable Amount, IGST Amount, SGST Amount, CGST Amount, Total Item Value, Tally Customer Name, Tally Item Name`
 
 #### Errors
 
