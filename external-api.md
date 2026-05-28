@@ -51,7 +51,7 @@ Required scopes per endpoint:
 | `orders.confirm_delivery` | `POST /external/orders/:orderId/confirm-delivery` |
 | `orders.grn.write` | `POST /external/orders/:orderId/grn` |
 | `orders.invoice.read` | `GET /external/orders/:orderId/invoice` |
-| `reports.invoices.read` | `GET /external/reports/invoices`, `GET /external/reports/invoices/export/header`, `GET /external/reports/invoices/export/line` |
+| `reports.invoices.read` | `GET /external/reports/invoices`, `GET /external/reports/invoices/export/header`, `GET /external/reports/invoices/export/line`, `GET /external/reports/credit-notes` |
 
 ## Content Type
 
@@ -416,6 +416,76 @@ Columns (in order):
 
 - `400` — `startDate`/`endDate` missing, malformed, or span exceeds 90 days
 - `403` — API key missing the `reports.invoices.read` scope
+
+### 8) List Credit Notes
+
+`GET /external/reports/credit-notes`
+
+Returns a JSON list of credit notes for the workspace, with summary totals. Customer-scoped API keys see only their own customer's credit notes.
+
+Requires scope: `reports.invoices.read`
+
+#### Query parameters
+
+| Param | Required | Description |
+|---|---|---|
+| `startDate` | optional | ISO 8601 date. Filter by `creditNoteDate >= startDate`. |
+| `endDate` | optional | ISO 8601 date. Filter by `creditNoteDate < endDate + 1 day`. |
+| `customerId` | optional (workspace keys only) | MongoDB ObjectId of a customer. Ignored on customer-scoped keys (always clamped to the key's customer). |
+
+The response is capped at the **2,000 most recent credit notes** (sorted by `creditNoteDate` desc).
+
+#### Example
+
+```bash
+curl -s \
+  -H "X-API-Key: flk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+  "https://app.backend.filflo.in/api/v1/external/reports/credit-notes?startDate=2026-04-01&endDate=2026-04-30"
+```
+
+#### Response (200)
+
+```json
+{
+  "items": [
+    {
+      "_id": "65...",
+      "creditNoteNumber": "CN-2026-0001",
+      "creditNoteType": "rto",
+      "creditNoteDate": "2026-04-15T00:00:00.000Z",
+      "orderId": { "_id": "64...", "orderId": "ORD-001", "invoiceId": "INV-2026-0001", "status": "rto" },
+      "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01" },
+      "amount": 11800.0,
+      "irnDetails": { "irn": "...", "ackNo": "...", "ackDt": "...", "status": "active" },
+      "irnStatus": "active",
+      "ewbNo": "EWB-...",
+      "originalInvoiceNumber": "INV-2026-0001",
+      "originalInvoiceDate": "2026-04-12T00:00:00.000Z",
+      "lineItems": [
+        {
+          "skuCode": "SKU-001",
+          "productName": "Widget",
+          "hsnCode": "1905",
+          "quantity": 10,
+          "unitPrice": 1000.0,
+          "taxableValue": 10000.0,
+          "gstRate": 18,
+          "cgst": 900.0,
+          "sgst": 900.0,
+          "igst": 0.0,
+          "total": 11800.0
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "totalCreditNotes": 1,
+    "totalAmount": 11800.0
+  }
+}
+```
+
+`creditNoteType` is one of `rtv` (return to vendor) or `rto` (return to origin). `orderId` is `null` for credit notes not linked to an order.
 
 ## Status Values
 
