@@ -454,7 +454,7 @@ curl -s \
       "creditNoteType": "rto",
       "creditNoteDate": "2026-04-15T00:00:00.000Z",
       "orderId": { "_id": "64...", "orderId": "ORD-001", "invoiceId": "INV-2026-0001", "status": "rto" },
-      "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01" },
+      "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01", "tally_party_name": "Acme Foods Pvt. Ltd - MAH" },
       "amount": 11800.0,
       "irnDetails": { "irn": "...", "ackNo": "...", "ackDt": "...", "status": "active" },
       "irnStatus": "active",
@@ -465,6 +465,7 @@ curl -s \
         {
           "skuCode": "SKU-001",
           "productName": "Widget",
+          "tallyItemName": "Widget - TALLY",
           "hsnCode": "1905",
           "quantity": 10,
           "unitPrice": 1000.0,
