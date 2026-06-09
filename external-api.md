@@ -453,9 +453,18 @@ curl -s \
       "creditNoteNumber": "CN-2026-0001",
       "creditNoteType": "rto",
       "creditNoteDate": "2026-04-15T00:00:00.000Z",
-      "orderId": { "_id": "64...", "orderId": "ORD-001", "invoiceId": "INV-2026-0001", "status": "rto" },
+      "orderId": { "_id": "64...", "orderId": "ORD-001", "invoiceId": "INV-2026-0001", "status": "rto", "orderReceivedDate": "2026-04-10T00:00:00.000Z" },
+      "orderDate": "2026-04-10T00:00:00.000Z",
       "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01", "tally_party_name": "Acme Foods Pvt. Ltd - MAH" },
       "amount": 11800.0,
+      "reason": "Damaged goods returned by customer",
+      "deliveryTo": {
+        "name": "Acme Foods",
+        "address": "Acme Foods, 12 MIDC Road, Mumbai, Maharashtra, 400001",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "pincode": "400001"
+      },
       "irnDetails": { "irn": "...", "ackNo": "...", "ackDt": "...", "status": "active" },
       "irnStatus": "active",
       "ewbNo": "EWB-...",
@@ -487,6 +496,12 @@ curl -s \
 ```
 
 `creditNoteType` is one of `rtv` (return to vendor) or `rto` (return to origin). `orderId` is `null` for credit notes not linked to an order.
+
+| Field | Description |
+|---|---|
+| `orderDate` | Order received date (PO date) of the linked order. `null` when the credit note is not tied to an order. |
+| `reason` | Free-text reason recorded when the credit note was raised. May be empty/`null`. |
+| `deliveryTo` | Ship-to party for the credit note. `address` is the credit note's own shipping-address snapshot when present, otherwise composed from the customer master (`name, shipping_address, shipping_city, shipping_state, shipping_pincode`). `city`, `state`, and `pincode` come from the customer master shipping fields. |
 
 ## Status Values
 
