@@ -325,11 +325,32 @@ curl -s \
       "invoiceDate": "2026-04-12T00:00:00.000Z",
       "orderReceivedDate": "2026-04-10T00:00:00.000Z",
       "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01", "tally_party_name": "Acme Foods Pvt. Ltd - MAH" },
-      "irnDetails": { "irn": "...", "ackNo": "...", "ackDt": "...", "status": "active" },
+      "irn": "...",
+      "irnAckNo": "...",
+      "irnAckDate": "2026-04-12T10:30:00.000Z",
       "irnStatus": "active",
       "gstAmount": 1800.0,
       "ewbNo": "EWB-...",
-      "invoiceValue": 11800.0
+      "ewbDate": "2026-04-12T11:00:00.000Z",
+      "ewbValidTill": "2026-04-14T23:59:59.000Z",
+      "invoiceValue": 11800.0,
+      "lineItems": [
+        {
+          "skuCode": "WG-PEN-400",
+          "name": "Wicked Pen 400ml",
+          "tallyItemName": "WG PEN 400 - TALLY",
+          "quantity": 100,
+          "approvedQuantity": 100,
+          "fulfilledQuantity": 100,
+          "unitPrice": 100.0,
+          "gstRate": 18,
+          "taxableValue": 10000.0,
+          "igstAmount": 0.0,
+          "sgstAmount": 900.0,
+          "cgstAmount": 900.0,
+          "totalValue": 11800.0
+        }
+      ]
     }
   ],
   "summary": {
@@ -340,6 +361,8 @@ curl -s \
   }
 }
 ```
+
+IRN/e-way bill fields are flat scalars (`null` when the invoice has no IRN). Line-item pricing fields (`unitPrice`, `gstRate`, `taxableValue`, GST splits, `totalValue`) come from the invoice's GST breakdown and are `null` for lines without invoice financials.
 
 ### 6) Export Invoices — Header CSV
 
@@ -465,9 +488,13 @@ curl -s \
         "state": "Maharashtra",
         "pincode": "400001"
       },
-      "irnDetails": { "irn": "...", "ackNo": "...", "ackDt": "...", "status": "active" },
+      "irn": "...",
+      "irnAckNo": "...",
+      "irnAckDate": "2026-04-15T10:30:00.000Z",
       "irnStatus": "active",
       "ewbNo": "EWB-...",
+      "ewbDate": "2026-04-15T11:00:00.000Z",
+      "ewbValidTill": "2026-04-17T23:59:59.000Z",
       "originalInvoiceNumber": "INV-2026-0001",
       "originalInvoiceDate": "2026-04-12T00:00:00.000Z",
       "lineItems": [
