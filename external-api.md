@@ -326,6 +326,7 @@ curl -s \
       "orderReceivedDate": "2026-04-10T00:00:00.000Z",
       "customerID": { "_id": "64...", "name": "Acme Foods", "location_code": "MUM-01", "tally_party_name": "Acme Foods Pvt. Ltd - MAH" },
       "shipFrom": {
+        "name": "Acme Warehousing Pvt Ltd",
         "address1": "Plot 7, Warehouse Park, Bhiwandi",
         "address2": "",
         "address3": "",
@@ -336,6 +337,7 @@ curl -s \
         "stateCode": "27"
       },
       "billTo": {
+        "name": "Acme Foods Pvt Ltd",
         "address1": "12 MIDC Road",
         "address2": "",
         "address3": "",
@@ -346,6 +348,7 @@ curl -s \
         "stateCode": "27"
       },
       "deliverTo": {
+        "name": "Acme Foods",
         "address1": "Acme Foods, 12 MIDC Road, Mumbai, Maharashtra, 400001",
         "address2": "",
         "address3": "",
@@ -394,13 +397,13 @@ curl -s \
 
 IRN/e-way bill fields are flat scalars (`null` when the invoice has no IRN). Line-item pricing fields (`unitPrice`, `gstRate`, `taxableValue`, GST splits, `totalValue`) come from the invoice's GST breakdown and are `null` for lines without invoice financials.
 
-Each invoice carries three address blocks with a common shape (`address1`, `address2`, `address3`, `city`, `state`, `pincode`, `gst`, `stateCode`):
+Each invoice carries three address blocks with a common shape (`name`, `address1`, `address2`, `address3`, `city`, `state`, `pincode`, `gst`, `stateCode`):
 
 | Block | Source |
 |---|---|
-| `shipFrom` | The invoice's invoicing profile (seller/warehouse): `address` → `address1`, plus `city`, `state`, `pincode`, `gstin` → `gst`, `stateCode`. |
-| `billTo` | Customer master billing fields: `billing_address` → `address1`, plus `billing_city`, `billing_state`, `billing_pincode`, `gst_number` → `gst`, `stateCode`. |
-| `deliverTo` | Order's `shippingAddress` snapshot when present, else customer `shipping_address`, into `address1`; plus customer `shipping_city`, `shipping_state`, `shipping_pincode`, `gst_number` → `gst`, `stateCode`. |
+| `shipFrom` | The invoice's invoicing profile (seller/warehouse): `legalName` → `tradeName` → `name` into `name`; `address` → `address1`, plus `city`, `state`, `pincode`, `gstin` → `gst`, `stateCode`. |
+| `billTo` | Customer master billing fields: `billing_name` → `name` (falls back to customer `name`) into `name`; `billing_address` → `address1`, plus `billing_city`, `billing_state`, `billing_pincode`, `gst_number` → `gst`, `stateCode`. |
+| `deliverTo` | Customer master `name` into `name`; order's `shippingAddress` snapshot when present, else customer `shipping_address`, into `address1`; plus customer `shipping_city`, `shipping_state`, `shipping_pincode`, `gst_number` → `gst`, `stateCode`. |
 
 The masters store each address as a single line, so it is returned in `address1` and `address2`/`address3` are empty strings. Any field is an empty string when the underlying master value is missing.
 
@@ -529,6 +532,7 @@ curl -s \
         "pincode": "400001"
       },
       "shipFrom": {
+        "name": "Acme Warehousing Pvt Ltd",
         "address1": "Plot 7, Warehouse Park, Bhiwandi",
         "address2": "",
         "address3": "",
@@ -539,6 +543,7 @@ curl -s \
         "stateCode": "27"
       },
       "billTo": {
+        "name": "Acme Foods Pvt Ltd",
         "address1": "12 MIDC Road",
         "address2": "",
         "address3": "",
@@ -549,6 +554,7 @@ curl -s \
         "stateCode": "27"
       },
       "deliverTo": {
+        "name": "Acme Foods",
         "address1": "Acme Foods, 12 MIDC Road, Mumbai, Maharashtra, 400001",
         "address2": "",
         "address3": "",
@@ -599,7 +605,7 @@ curl -s \
 | `orderDate` | Order received date (PO date) of the linked order. `null` when the credit note is not tied to an order. |
 | `reason` | Free-text reason recorded when the credit note was raised. May be empty/`null`. |
 | `deliveryTo` | Ship-to party for the credit note. `address` is the credit note's own shipping-address snapshot when present, otherwise composed from the customer master (`name, shipping_address, shipping_city, shipping_state, shipping_pincode`). `city`, `state`, and `pincode` come from the customer master shipping fields. |
-| `shipFrom` / `billTo` / `deliverTo` | Structured address blocks, same shape and sourcing as the List Invoices endpoint (`shipFrom` ← invoicing profile, `billTo` ← customer billing, `deliverTo` ← credit note `shippingAddress` snapshot → else customer shipping). Each is `address1`, `address2`, `address3`, `city`, `state`, `pincode`, `gst`, `stateCode`. The masters store a single address line, so it lands in `address1` and `address2`/`address3` are empty strings. `deliverTo` here is the structured counterpart to the legacy flat `deliveryTo` object, which is retained for backward compatibility. |
+| `shipFrom` / `billTo` / `deliverTo` | Structured address blocks, same shape and sourcing as the List Invoices endpoint (`shipFrom` ← invoicing profile, `billTo` ← customer billing, `deliverTo` ← credit note `shippingAddress` snapshot → else customer shipping). Each is `name`, `address1`, `address2`, `address3`, `city`, `state`, `pincode`, `gst`, `stateCode`. The masters store a single address line, so it lands in `address1` and `address2`/`address3` are empty strings. `deliverTo` here is the structured counterpart to the legacy flat `deliveryTo` object, which is retained for backward compatibility. |
 
 ## Status Values
 
