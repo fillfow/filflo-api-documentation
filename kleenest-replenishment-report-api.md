@@ -1,8 +1,11 @@
-# Kleenest — Replenishment Report API
+# Kleenest — External API
 
-**Audience:** Kleenest teams and tools (Power BI, Google Sheets, scripts) that need the Replenishment SKU-wise report without downloading it from FilFlo by hand.
+**Audience:** Kleenest teams and tools (Power BI, Google Sheets, scripts) that need FilFlo reports without downloading them by hand.
 
-This document covers one read-only endpoint that returns the Replenishment page's **"Download SKU-wise"** report — the same 97 columns, one row per order line — as JSON or CSV.
+This document covers two read-only endpoints, both returning JSON or CSV:
+
+- **Replenishment SKU-wise report:** the Replenishment page's **"Download SKU-wise"** report, with the same 97 columns and one row per order line.
+- **Consolidated inventory:** current stock per casepack SKU per warehouse, as on the Stock → Consolidated Inventory page.
 
 > This API runs on the Kleenest FilFlo deployment. Its base URL, keys and limits are separate from the general [FilFlo External API](./external-api.md).
 
@@ -36,8 +39,9 @@ Notes:
 | Scope | Endpoint |
 |---|---|
 | `replenishment_sku_report` | `GET /external/replenishment-sku-report` |
+| `consolidated_inventory` | `GET /external/consolidated-inventory` |
 
-A key without the required scope gets `403`.
+A key can hold several scopes. A key without the required scope gets `403`.
 
 ## Rate Limiting
 
@@ -53,9 +57,9 @@ Headers on every response:
 - `X-RateLimit-Limit`
 - `X-RateLimit-Remaining`
 
-## Endpoint
+## Endpoints
 
-### Get Replenishment SKU-wise Report
+### 1) Get Replenishment SKU-wise Report
 
 `GET /external/replenishment-sku-report`
 
@@ -204,9 +208,100 @@ async function fetchReport(from, to, filters = {}) {
 
 For periods longer than 93 days, split them into several ranges and call each one in turn.
 
+The replenishment report's 97 columns are listed in the [Column Dictionary](#column-dictionary) at the end of this document.
+
+### 2) Get Consolidated Inventory
+
+`GET /external/consolidated-inventory`
+
+Returns a current snapshot of stock for every active casepack SKU, with **one row per SKU per warehouse**. There are no date filters and no pages: every call returns the full snapshot for the filters you pass. Rows are sorted by SKU code, then warehouse.
+
+Requires scope: `consolidated_inventory`
+
+#### Query parameters
+
+| Param | Required | Description |
+|---|---|---|
+| `location` | optional | Warehouse, as shown in FilFlo (case-insensitive). One value or comma-separated. Default: all warehouses. An unknown value returns `400` listing the valid ones. |
+| `sku` | optional | Casepack SKU code. One value or comma-separated. Default: all active casepack SKUs. |
+| `include_pending_inward` | optional | `true` to add the `pending_inward` column. Default `false`. |
+| `include_pallets` | optional | `true` to add the `received_not_racked` and `racked` columns. Default `false`. |
+| `format` | optional | `json` (default) or `csv`. |
+
+#### Columns
+
+Quantities are in cases. Optional columns are left out completely unless you ask for them.
+
+| Column | Included | Meaning |
+|---|---|---|
+| `sku_code` | always | Casepack SKU code. |
+| `product_name` | always | SKU name. |
+| `location` | always | Warehouse. |
+| `current` | always | Current B2B stock. |
+| `allocated` | always | Stock allocated to approved orders that are not yet picked. |
+| `pending_inward` | `include_pending_inward=true` | Pallet-tracked warehouses only: stock received but not yet scanned in. `null` for other warehouses. |
+| `received_not_racked` | `include_pallets=true` | Pallet-tracked warehouses only: stock on pallets received but not yet racked. `null` for other warehouses. |
+| `racked` | `include_pallets=true` | Pallet-tracked warehouses only: stock on racked pallets. `null` for other warehouses. |
+
+#### Example — JSON
+
+```bash
+curl -s \
+  -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/consolidated-inventory"
+```
+
+#### Example — CSV with all columns
+
+```bash
+curl -s \
+  -H "X-API-Key: $KLEENEST_API_KEY" \
+  --output inventory.csv \
+  "https://backend.kleenest.filflo.in/api/v1/external/consolidated-inventory?include_pending_inward=true&include_pallets=true&format=csv"
+```
+
+#### Response (200) — JSON
+
+```json
+{
+  "success": true,
+  "report": "consolidated_inventory",
+  "generated_at": "2026-10-14T09:30:00.000Z",
+  "filters": {
+    "location": null,
+    "sku": null,
+    "include_pending_inward": false,
+    "include_pallets": false
+  },
+  "columns": ["sku_code", "product_name", "location", "current", "allocated"],
+  "row_count": 1208,
+  "rows": [
+    {
+      "sku_code": "CP12-KLN-FC-500",
+      "product_name": "Floor Cleaner 500ml",
+      "location": "<warehouse>",
+      "current": 120,
+      "allocated": 30
+    }
+  ]
+}
+```
+
+- `columns` lists exactly the columns in each row, in order.
+- `filters` echoes what was applied. `location` and `sku` are `null` when not filtered.
+
+#### Response (200) — CSV
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="consolidated-inventory_<YYYY-MM-DD>.csv"
+```
+
+A header row with the column names, then one row per SKU per warehouse.
+
 ## Status Values
 
-Accepted by the `status` filter (comma-separate to combine):
+Accepted by the replenishment report's `status` filter (comma-separate to combine):
 
 | Status | Meaning |
 |---|---|
@@ -238,7 +333,7 @@ Errors are returned as JSON:
 
 | HTTP | `error.code` | What to do |
 |---|---|---|
-| `400` | `invalid_date_range`, `date_range_too_large`, `invalid_date_field`, `invalid_format`, `invalid_page`, `invalid_page_size` | Fix the query parameters. |
+| `400` | `invalid_date_range`, `date_range_too_large`, `invalid_date_field`, `invalid_format`, `invalid_page`, `invalid_page_size`, `invalid_location`, `invalid_include_pending_inward`, `invalid_include_pallets` | Fix the query parameters. |
 | `401` | `missing_api_key`, `invalid_api_key`, `expired_api_key` | Check the key, or ask FilFlo for a new one. |
 | `403` | `insufficient_scope` | The key is not allowed to use this endpoint. |
 | `429` | `rate_limited`, `concurrent_request` | Wait `Retry-After` seconds, or for your previous request to finish. |
@@ -246,8 +341,8 @@ Errors are returned as JSON:
 
 ## Retries
 
-- The endpoint is read-only and safe to retry.
-- On `429` or `500`, wait and retry the same page. Do not retry in parallel.
+- Both endpoints are read-only and safe to retry.
+- On `429` or `500`, wait and retry the same request. Do not retry in parallel.
 
 ## Security Recommendations
 
@@ -257,7 +352,7 @@ Errors are returned as JSON:
 
 ## Column Dictionary
 
-Columns appear in this order in both JSON (`columns`) and CSV (header row). Quantities without "(in Units)" are in cases. Dates are `DD-Mon-YYYY` and times `HH:mm:ss`, in IST.
+Replenishment SKU-wise report columns. They appear in this order in both JSON (`columns`) and CSV (header row). Quantities without "(in Units)" are in cases. Dates are `DD-Mon-YYYY` and times `HH:mm:ss`, in IST.
 
 | # | Column | Meaning |
 |---|---|---|
