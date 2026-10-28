@@ -2,9 +2,10 @@
 
 **Audience:** Kleenest teams and tools (Power BI, Google Sheets, scripts) that need FilFlo reports without downloading them by hand.
 
-This document covers two read-only endpoints, both returning JSON or CSV:
+This document covers three read-only endpoints, all returning JSON or CSV:
 
 - **Replenishment SKU-wise report:** the Replenishment page's **"Download SKU-wise"** report, with the same 97 columns and one row per order line.
+- **Replenishment Order-wise report:** the Replenishment page's **"Download Order-wise"** report, with 99 columns and one row per order.
 - **Consolidated inventory:** current stock per casepack SKU per warehouse, as on the Stock → Consolidated Inventory page.
 
 > This API runs on the Kleenest FilFlo deployment. Its base URL, keys and limits are separate from the general [FilFlo External API](./external-api.md).
@@ -38,10 +39,10 @@ Notes:
 
 | Scope | Endpoint |
 |---|---|
-| `replenishment_sku_report` | `GET /external/replenishment-sku-report` |
+| `replenishment_sku_report` | `GET /external/replenishment-sku-report`, `GET /external/replenishment-order-report` |
 | `consolidated_inventory` | `GET /external/consolidated-inventory` |
 
-A key can hold several scopes. A key without the required scope gets `403`.
+A key can hold several scopes. A key without the required scope gets `403`. Any key that can read the SKU-wise report can also read the Order-wise report.
 
 ## Rate Limiting
 
@@ -210,7 +211,161 @@ For periods longer than 93 days, split them into several ranges and call each on
 
 The replenishment report's 97 columns are listed in the [Column Dictionary](#column-dictionary) at the end of this document.
 
-### 2) Get Consolidated Inventory
+### 2) Get Replenishment Order-wise Report
+
+`GET /external/replenishment-order-report`
+
+Returns the Order-wise report for orders matching the filters, with **one row per order**. Quantities are totals over the order's SKUs, along with SKU counts, shortfall and fill-rate percentages, box count and total weight. Orders are sorted by creation, oldest first, so pages are stable while you page through.
+
+Requires scope: `replenishment_sku_report` (the same scope as the SKU-wise report).
+
+#### Query parameters
+
+The same as the [SKU-wise report](#1-get-replenishment-sku-wise-report): `from`, `to` (at most **93 days**), `date_field`, `location`, `status`, `order_type`, `po_type`, `page`, `page_size` (orders per page, 1 to 100) and `format`. The `status` filter takes the same [Status Values](#status-values).
+
+#### Example — JSON
+
+```bash
+curl -s \
+  -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/replenishment-order-report?from=2026-10-01&to=2026-10-07"
+```
+
+#### Example — CSV
+
+```bash
+curl -s \
+  -H "X-API-Key: $KLEENEST_API_KEY" \
+  --output orders.csv \
+  "https://backend.kleenest.filflo.in/api/v1/external/replenishment-order-report?from=2026-10-01&to=2026-10-07&date_field=invoiceDate&format=csv"
+```
+
+#### Example — with filters
+
+```bash
+curl -s \
+  -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/replenishment-order-report?from=2026-10-01&to=2026-10-31&order_type=Blinkit&status=delivered,grn_entered"
+```
+
+#### Response (200) — JSON
+
+```json
+{
+  "success": true,
+  "report": "replenishment_order_wise",
+  "generated_at": "2026-10-13T09:30:00.000Z",
+  "filters": {
+    "from": "2026-10-01",
+    "to": "2026-10-07",
+    "date_field": "createdAt",
+    "location": null,
+    "status": null,
+    "order_type": null,
+    "po_type": null
+  },
+  "pagination": {
+    "page": 1,
+    "page_size": 100,
+    "total_orders": 240,
+    "total_pages": 3,
+    "has_more": true,
+    "next_page": 2
+  },
+  "columns": ["PO Number", "Invoice Number", "..."],
+  "row_count": 100,
+  "rows": [
+    {
+      "PO Number": "4100123456",
+      "Invoice Number": "IN-HR-26/27-0412",
+      "Box Count": 42,
+      "Total Weight (kg)": "318.40",
+      "WH": "Gurgaon Warehouse",
+      "Punch Date": "02-Oct-2026",
+      "Punch Time": "11:42:10",
+      "Order Status": "invoiced",
+      "Distinct Sku - Ordered": 5,
+      "Qty ordered (case units)": 120,
+      "Qty ordered (in units)": 1440,
+      "Qty Fulfilled / Dispatched (case units)": 108,
+      "Ordered vs Fulfilled % (Qty)": "90.00%",
+      "Channel": null,
+      "...": "..."
+    }
+  ]
+}
+```
+
+- `rows` is keyed by column name, in the order of `columns`. Empty cells are `null` or an empty string.
+- `row_count` is the number of orders on this page (one row per order), at most `page_size`.
+- Keep requesting `next_page` until it is `null` / `has_more` is `false`.
+
+#### Response (200) — CSV
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="replenishment-order-report_<from>_<to>_p<page>.csv"
+X-Page: 1
+X-Page-Size: 100
+X-Total-Orders: 240
+X-Total-Pages: 3
+X-Has-More: true
+```
+
+The body is a header row of the 99 column names, then one row per order, every cell quoted. Pagination is in the `X-*` headers above.
+
+#### Paging through a full range — Python
+
+```python
+import os, requests
+
+URL = "https://backend.kleenest.filflo.in/api/v1/external/replenishment-order-report"
+HEADERS = {"X-API-Key": os.environ["KLEENEST_API_KEY"]}
+
+def fetch_orders(date_from, date_to, **filters):
+    rows, page = [], 1
+    while page:
+        params = {"from": date_from, "to": date_to, "page": page, "page_size": 100, **filters}
+        res = requests.get(URL, headers=HEADERS, params=params, timeout=120)
+        res.raise_for_status()
+        body = res.json()
+        rows.extend(body["rows"])
+        page = body["pagination"]["next_page"]
+    return rows
+
+orders = fetch_orders("2026-10-01", "2026-10-07", order_type="Blinkit")
+print(len(orders), "orders")
+```
+
+The JavaScript example above works the same way: change `URL` to `.../replenishment-order-report`.
+
+#### Matches the page download
+
+Cell values match the Replenishment page's Order-wise download, including:
+
+- `Channel`, `Account Managers` and `Tracking Link` are always empty.
+- `Qty GRN (in units)` is the plain sum of GRN quantities (same value as `GRN Qty`, not multiplied by case size). The GRN percent and shortfall columns use that value.
+- `EDD Date` / `EDD Time` repeat the delivery date and time.
+- `State/Zone` and `City` repeat the billing state and city.
+
+Columns that hold the same value as a SKU-wise column use the SKU-wise name, so both reports name shared data the same way. These 7 headers differ from the page download:
+
+| API header (same as SKU-wise) | Header in the page's Order-wise download |
+|---|---|
+| `PO Number` | PO Number/Order No |
+| `Invoice date*` | Invoice date |
+| `Invoice time*` | Invoice Time |
+| `Order Type` | Platform/Order Type |
+| `Total Invoice Amount With Tax` | Total Invoice Value |
+| `Mode of Transport` | Dispatch Mode |
+| `Carrier/Shipping Partner` | Carrier\* |
+
+- `Total Invoice Amount With Tax` is empty (not `"N/A"` as in SKU-wise) when the order has no e-invoice, like the page download.
+- `Total Weight (kg)` keeps its own name because it is the whole order's weight, while the SKU-wise `Weight` is per line.
+
+The Order-wise report's 99 columns are listed in the [Order-wise Column Dictionary](#order-wise-column-dictionary) at the end of this document.
+
+### 3) Get Consolidated Inventory
 
 `GET /external/consolidated-inventory`
 
@@ -301,7 +456,7 @@ A header row with the column names, then one row per SKU per warehouse.
 
 ## Status Values
 
-Accepted by the replenishment report's `status` filter (comma-separate to combine):
+Accepted by the replenishment reports' `status` filter, SKU-wise and Order-wise (comma-separate to combine):
 
 | Status | Meaning |
 |---|---|
@@ -341,7 +496,7 @@ Errors are returned as JSON:
 
 ## Retries
 
-- Both endpoints are read-only and safe to retry.
+- All endpoints are read-only and safe to retry.
 - On `429` or `500`, wait and retry the same request. Do not retry in parallel.
 
 ## Security Recommendations
@@ -453,3 +608,109 @@ Replenishment SKU-wise report columns. They appear in this order in both JSON (`
 | 95 | Proof of GRN | GRN copy file URL. |
 | 96 | Has Proof of Dispatch | "True" if a proof of dispatch is attached. |
 | 97 | Proof of Dispatch | Proof of dispatch file URL. |
+
+## Order-wise Column Dictionary
+
+Replenishment Order-wise report columns. They appear in this order in both JSON (`columns`) and CSV (header row). "(case units)" columns are in cases; "(in units)" columns multiply each SKU's cases by its case size. Percent columns are "N/A" when the denominator is 0. Dates are `DD-Mon-YYYY` and times `HH:mm:ss`, in IST.
+
+| # | Column | Meaning |
+|---|---|---|
+| 1 | PO Number | Customer PO number (FilFlo order ID). |
+| 2 | Invoice Number | Tax invoice / delivery note number. Blank until invoiced. |
+| 3 | LR Number | Lorry receipt / AWB number. |
+| 4 | GRN Qty | Total GRN quantity across all SKUs of the order, as recorded at GRN. |
+| 5 | Invoice Qty | Total invoiced (fulfilled) quantity across all SKUs, in cases. |
+| 6 | Box Count | Boxes outwarded for the order. |
+| 7 | Total Weight (kg) | Total weight (kg) of the boxes outwarded for the order, 2 decimals. |
+| 8 | WH | Fulfilment warehouse. |
+| 9 | Supplier GSTIN | Seller GSTIN on the e-invoice. |
+| 10 | Supplier Name | Seller legal name on the e-invoice. |
+| 11 | Bill from Address | Seller address on the e-invoice. |
+| 12 | Dispatch from Address | Dispatch address on the e-invoice (same as the seller address today). |
+| 13 | PO Date | PO date as received from the customer. |
+| 14 | PO Time | PO time as received from the customer. |
+| 15 | Appointment Date | Delivery appointment date at the customer. |
+| 16 | Appointment Time | Delivery appointment time at the customer. |
+| 17 | Appointment ID | Customer appointment reference. |
+| 18 | PO Expiry Date | PO expiry date. |
+| 19 | PO Expiry Time | PO expiry time. |
+| 20 | Punch Date | Date the order was created in FilFlo. |
+| 21 | Punch Time | Time the order was created in FilFlo. |
+| 22 | Approved Date | Date the order was approved. |
+| 23 | Approved Time | Time the order was approved. |
+| 24 | Picked Date | Date the order was picked. |
+| 25 | Picked Time | Time the order was picked. |
+| 26 | Scheduled Dispatch Date | Planned dispatch date. |
+| 27 | Scheduled Dispatch Time | Planned dispatch time. |
+| 28 | Invoice date\* | Invoice date. |
+| 29 | Invoice time\* | Invoice time. |
+| 30 | Dispatch Date | Actual dispatch date. |
+| 31 | Dispatch Time | Actual dispatch time. |
+| 32 | Delivery Date | Delivery date. |
+| 33 | Delivery Time | Delivery time. |
+| 34 | Voucher Type | "Tax Invoice" or "Delivery Note". |
+| 35 | Order Status | Order status, e.g. open, approved, picked, invoiced, in_transit, delivered, grn_entered, cancelled. |
+| 36 | Invoice Status | "Invoiced", "Not Invoiced" or "Invoice Cancelled". |
+| 37 | Order Remarks | Remarks entered on the order. |
+| 38 | Order Type | Channel, e.g. Blinkit, Zepto, Swiggy, Modern-Trade, General-Trade. |
+| 39 | PO Type | "Local" or "Outstation". |
+| 40 | Total Invoice Amount With Tax | Invoice total including tax, from the e-invoice. Empty if there is no e-invoice. |
+| 41 | Customer | Customer (bill-to party) name. |
+| 42 | Customer GST | Customer GSTIN. |
+| 43 | Billing Address | Customer billing address. |
+| 44 | Bill To State | Billing state. |
+| 45 | Bill To City | Billing city. |
+| 46 | Bill To Pincode | Billing pincode. |
+| 47 | Ship To Partyname | Ship-to party name. |
+| 48 | Shipping Address | Ship-to address or delivery location. |
+| 49 | Ship To GSTIN | Ship-to GSTIN. |
+| 50 | Ship To State | Ship-to state. |
+| 51 | Ship To Pincode | Ship-to pincode. |
+| 52 | Channel | Always empty (kept so the columns match the page download). |
+| 53 | State/Zone | Billing state (same as Bill To State). |
+| 54 | City | Billing city (same as Bill To City). |
+| 55 | Account Managers | Always empty (kept so the columns match the page download). |
+| 56 | Distinct Sku - Ordered | Number of SKUs on the order. |
+| 57 | Qty ordered (case units) | Total ordered quantity, in cases. |
+| 58 | Qty ordered (in units) | Total ordered quantity, each SKU's cases x its case size. |
+| 59 | Distinct Sku - Approved | Number of SKUs with an approved quantity above 0. |
+| 60 | Qty Approved (case units) | Total approved quantity, in cases. |
+| 61 | Qty Approved (in units) | Total approved quantity, each SKU's cases x its case size. |
+| 62 | Distinct Sku - Fulfilled/ Dispatched | Number of SKUs with a fulfilled quantity above 0. |
+| 63 | Qty Fulfilled / Dispatched (case units) | Total fulfilled / dispatched quantity, in cases. |
+| 64 | Qty Fulfilled / Dispatched (in units) | Total fulfilled / dispatched quantity, each SKU's cases x its case size. |
+| 65 | Distinct Sku - GRN | Number of SKUs with a GRN quantity above 0. |
+| 66 | Qty GRN (in units) | Total GRN quantity. Same value as GRN Qty (not multiplied by case size). |
+| 67 | Short Fulfilled Quantity (SKU) | Distinct SKUs approved minus distinct SKUs fulfilled. |
+| 68 | Short Fulfilled Quantity (Units) | Approved units minus fulfilled units. |
+| 69 | Short GRN Quantity (SKU) | Distinct SKUs fulfilled minus distinct SKUs with a GRN quantity. |
+| 70 | Short GRN Quantity (Units) | Fulfilled units minus Qty GRN (in units). |
+| 71 | Ordered vs Approved % (SKU) | Distinct SKUs approved / ordered, as a percent ("N/A" when ordered is 0). |
+| 72 | Ordered vs Approved % (Qty) | Approved units / ordered units, as a percent ("N/A" when ordered is 0). |
+| 73 | Approved vs Fulfilled % (SKU) | Distinct SKUs fulfilled / approved, as a percent ("N/A" when approved is 0). |
+| 74 | Approved vs Fulfilled % (Qty) | Fulfilled units / approved units, as a percent ("N/A" when approved is 0). |
+| 75 | Ordered vs Fulfilled % (SKU) | Distinct SKUs fulfilled / ordered, as a percent ("N/A" when ordered is 0). |
+| 76 | Ordered vs Fulfilled % (Qty) | Fulfilled units / ordered units, as a percent ("N/A" when ordered is 0). |
+| 77 | Fulfilled vs GRN % (SKU) | Distinct SKUs with GRN / fulfilled, as a percent ("N/A" when fulfilled is 0). |
+| 78 | Fulfilled vs GRN % (Qty) | Qty GRN (in units) / fulfilled units, as a percent ("N/A" when fulfilled is 0). |
+| 79 | Ordered vs GRN % (SKU) | Distinct SKUs with GRN / ordered, as a percent ("N/A" when ordered is 0). |
+| 80 | Ordered vs GRN % (Qty) | Qty GRN (in units) / ordered units, as a percent ("N/A" when ordered is 0). |
+| 81 | Approval Remarks | Distinct approval remarks of the order's SKUs, comma-separated. |
+| 82 | WH/Fulfillment Remarks | Distinct fulfilment remarks of the order's SKUs, comma-separated. |
+| 83 | GRN Remarks | Distinct GRN remarks of the order's SKUs, comma-separated. |
+| 84 | Reason for Shortfall | Order-level shortfall reason. |
+| 85 | EDD Date | Expected delivery date (reported as the delivery date). |
+| 86 | EDD Time | Expected delivery time (reported as the delivery time). |
+| 87 | Mode of Transport | Mode of transport. |
+| 88 | Carrier/Shipping Partner | Carrier / transporter. |
+| 89 | Tracking Link | Always empty (kept so the columns match the page download). |
+| 90 | Dispatch Status | "True" once the order is in transit, delivered or GRN entered. |
+| 91 | Delivery Status | "True" once the order is delivered or GRN entered. |
+| 92 | Has Proof of Delivery | "True" if a proof of delivery is attached. |
+| 93 | Proof of Delivery | Proof of delivery file URL. |
+| 94 | Has PO Proof | "True" if the PO copy is attached. |
+| 95 | PO Proof | PO copy file URL. |
+| 96 | Has Proof of GRN | "True" if a GRN copy is attached. |
+| 97 | Proof of GRN | GRN copy file URL. |
+| 98 | Has Proof of Dispatch | "True" if a proof of dispatch is attached. |
+| 99 | Proof of Dispatch | Proof of dispatch file URL. |
