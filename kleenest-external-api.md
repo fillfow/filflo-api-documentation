@@ -2,11 +2,12 @@
 
 **Audience:** Kleenest teams and tools (Power BI, Google Sheets, scripts) that need FilFlo reports without downloading them by hand.
 
-This document covers three read-only endpoints, all returning JSON or CSV:
+This document covers four read-only endpoints, all returning JSON or CSV:
 
 - **Replenishment SKU-wise report:** the Replenishment page's **"Download SKU-wise"** report, with the same 97 columns and one row per order line.
 - **Replenishment Order-wise report:** the Replenishment page's **"Download Order-wise"** report, with 99 columns and one row per order.
 - **Consolidated inventory:** current stock per casepack SKU per warehouse, as on the Stock → Consolidated Inventory page.
+- **RTO report:** every Return Inward with its crates and the Inventory POs raised from each crate (one row per Return Inward x crate x PO), or, with `view=pendancy`, the RTO Pendancy page's data (returned goods not back in stock yet).
 
 > This API runs on the Kleenest FilFlo deployment. Its base URL, keys and limits are separate from the general [FilFlo External API](./external-api.md).
 
@@ -41,8 +42,9 @@ Notes:
 |---|---|
 | `replenishment_sku_report` | `GET /external/replenishment-sku-report`, `GET /external/replenishment-order-report` |
 | `consolidated_inventory` | `GET /external/consolidated-inventory` |
+| `rto_report` | `GET /external/rto-report` |
 
-A key can hold several scopes. A key without the required scope gets `403`. Any key that can read the SKU-wise report can also read the Order-wise report.
+A key can hold several scopes. A key without the required scope gets `403`. Any key that can read the SKU-wise report can also read the Order-wise report. New keys get every scope; keys issued before the RTO report was added get `rto_report` from FilFlo on request.
 
 ## Rate Limiting
 
@@ -454,6 +456,174 @@ Content-Disposition: attachment; filename="consolidated-inventory_<YYYY-MM-DD>.c
 
 A header row with the column names, then one row per SKU per warehouse.
 
+### 4) Get RTO Report
+
+`GET /external/rto-report`
+
+Returns returned-goods (RTO) data. One endpoint, two views:
+
+- **`view=rto` (default): RTO data.** Every Return Inward whose `date_field` falls between `from` and `to`, oldest first, with **one row per Return Inward x crate x Inventory PO**. `Crate Count` shows how many crates were made from the Return Inward. A Return Inward with no crate yet has one row with the crate and PO columns empty (`Remark`: `No crate yet (<status>)`); a crate with no Inventory PO yet has one `No PO raised` row. The crate and PO columns are the same as the Crates page **Crate PO Summary** download.
+- **`view=pendancy`: RTO Pendancy data**, the same rows as the RTO Pendancy page: returned goods received at the warehouse but not back in stock yet, one row per SKU. `stage` picks the rows; `stage=short_received` returns units expected but not received yet, with their own columns. The response also carries the page's `summary` totals (computed before the `stage` filter). Dates are optional: without them you get everything pending now.
+
+Requires scope: `rto_report`
+
+#### Query parameters
+
+| Parameter | Views | Required | Description |
+|-----------|-------|----------|-------------|
+| `view` | both | No | `rto` (default) or `pendancy`. |
+| `from` | both | `rto`: **Yes**. `pendancy`: No | Start date, `YYYY-MM-DD`, IST calendar day, inclusive. In the pendancy view pass both `from` and `to` or neither (default: all time). |
+| `to` | both | `rto`: **Yes**. `pendancy`: No | End date, `YYYY-MM-DD`, IST calendar day, inclusive. At most **93 days** after `from`. |
+| `date_field` | `rto` | No | Which Return Inward date `from`/`to` filter on: `createdAt` (default), `rto_pickup_date` or `rto_delivery_date`. In the pendancy view the dates filter on `Received On` (the crate's inward date; short rows: the last inward). |
+| `location` | both | No | Warehouse. One value or comma-separated: `gurgaon losung`, `gurgaon sevenseas`, `mumbai zippee`, `bangalore quiklee`, `chennai quiklee`, `hyderabad quiklee`, `jwl_gurgaon`, `jwl_bangalore`. Default: all. |
+| `status` | `rto` | No | Return Inward status. One value or comma-separated: `pending`, `rto_in_transit`, `partially_received`, `received`, `not_received`, `cancelled`. Default: all. |
+| `platform` | `rto` | No | Return Inward platform, exactly as stored (e.g. `Blinkit`, `Swiggy`). |
+| `stage` | `pendancy` | No | `all` (default: every pending crate and PO row), `crate_pending`, `handover_pending`, `qc_pending`, `po_pending`, or `short_received`. |
+| `page` | both | No | Page number, from 1. Default 1. |
+| `page_size` | both | No | 1 to 100. Default 100. Counted in **Return Inwards** in the `rto` view (a Return Inward's rows are never split across pages) and in **rows** in the `pendancy` view. |
+| `format` | both | No | `json` (default) or `csv`. |
+
+Parameters of the other view are ignored. Dates in the rows are `DD-Mon-YYYY` or `DD-Mon-YYYY HH:mm`, IST. Status and stage values in the rows are shown title-cased, as on the pages (e.g. `Partially Received`).
+
+#### Pendancy stages
+
+| `stage` | Rows |
+|---------|------|
+| `all` | All pending rows: `crate_pending` + `po_pending`. |
+| `crate_pending` | Crate units not yet marked sellable or discarded (`handover_pending` + `qc_pending`). |
+| `handover_pending` | Crate not yet handed over to QC. |
+| `qc_pending` | Crate handed over, QC not finished. |
+| `po_pending` | QC raised a sellable Inventory PO but its QR codes are not fully scanned / inwarded yet. |
+| `short_received` | Partially received Return Inwards: units expected but not received yet (different columns). |
+
+#### Response
+
+```json
+{
+  "success": true,
+  "report": "rto_data",
+  "generated_at": "2026-11-04T09:30:00.000Z",
+  "filters": { "view": "rto", "from": "2026-10-01", "to": "2026-10-31", "date_field": "createdAt",
+               "location": null, "status": null, "platform": null },
+  "pagination": { "page": 1, "page_size": 100, "total_return_inwards": 140,
+                  "total_pages": 2, "has_more": true, "next_page": 2 },
+  "columns": ["RTO Inward ID", "RTO Inward Status", "..."],
+  "row_count": 236,
+  "rows": [
+    {
+      "RTO Inward ID": "RTO-INWARD-0000000392",
+      "RTO Inward Status": "Received",
+      "Warehouse": "jwl_gurgaon",
+      "Platform": "Swiggy",
+      "Credit Note No": "CN-HR-26/27-0419",
+      "RI Expected Qty": 21,
+      "RI Received Qty": 21,
+      "Crate Count": 1,
+      "Crate ID": "CRT-0000000013",
+      "Crate Status": "Processed",
+      "SKU Code": "0000487",
+      "Crate Qty (units)": 21,
+      "Sellable (units)": 21,
+      "Discarded (units)": 0,
+      "Inventory PO": "INV-PO/CP2/01102026/9U",
+      "PO Type": "B2B - RTO sellable",
+      "PO Status": "Fulfilled",
+      "PO SKU (Case Pack)": "CP21-0000487",
+      "Case Size": 21,
+      "Pending (Units)": 0,
+      "QRs Linked": 1,
+      "QRs Inwarded": 1,
+      "Remark": "Inwarded to stock",
+      "...": "..."
+    }
+  ]
+}
+```
+
+With `view=pendancy`, `report` is `rto_pendancy`, `pagination` has `total_rows` instead of `total_return_inwards`, and there is a `summary`:
+
+```json
+{
+  "success": true,
+  "report": "rto_pendancy",
+  "generated_at": "2026-11-04T09:30:00.000Z",
+  "filters": { "view": "pendancy", "from": null, "to": null, "location": null, "stage": "all" },
+  "summary": { "totalPendingUnits": 749, "pendingSkuLines": 8, "cratesPending": 2,
+               "crateHandoverPending": 1, "crateQcPending": 1, "cratePendingUnits": 749,
+               "posPending": 0, "poPendingUnits": 0, "returnInwardsPending": 2,
+               "oldestPendingDays": 161, "shortReceivedUnits": 1744, "shortReceivedLines": 22 },
+  "pagination": { "page": 1, "page_size": 100, "total_rows": 8,
+                  "total_pages": 1, "has_more": false, "next_page": null },
+  "columns": ["Stage", "Warehouse", "RTO Inward ID", "..."],
+  "row_count": 8,
+  "rows": [
+    { "Stage": "Crate Pending - QC Pending", "Crate ID": "CRT-0000000002", "SKU Code": "0000391",
+      "Pending Units": 10, "Received On (IST)": "28-May-2026 15:54", "Age (days)": 159,
+      "Action Needed": "QC: mark Sellable or Discard", "...": "..." }
+  ]
+}
+```
+
+| `summary` field | Meaning |
+|-----------------|---------|
+| `totalPendingUnits` | Units pending across all pending rows. |
+| `pendingSkuLines` | Number of pending rows. |
+| `cratesPending`, `crateHandoverPending`, `crateQcPending` | Crates with pending units (all / handover pending / QC pending). |
+| `cratePendingUnits`, `poPendingUnits` | Pending units at crate stage / on Inventory POs. |
+| `posPending` | Inventory POs with QR codes still to scan / inward. |
+| `returnInwardsPending` | Return Inwards with pending rows. |
+| `oldestPendingDays` | Age of the oldest pending row. |
+| `shortReceivedUnits`, `shortReceivedLines` | Units / rows expected but not received yet. |
+
+With `format=csv`, the body is a CSV with a header row and every cell quoted; each page is a complete CSV. Pagination is in the `X-Page`, `X-Page-Size`, `X-Total-Pages`, `X-Has-More` headers, plus `X-Total-Return-Inwards` (`rto` view) or `X-Total-Rows` (`pendancy` view). File name: `rto-report_<view>_<from>_<to>_p<page>.csv`.
+
+#### Examples
+
+```bash
+# RTO data for October (JSON)
+curl -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/rto-report?from=2026-10-01&to=2026-10-31"
+
+# Received / partially received returns at JWL Gurgaon, as CSV
+curl -H "X-API-Key: $KLEENEST_API_KEY" -o rto.csv \
+  "https://backend.kleenest.filflo.in/api/v1/external/rto-report?from=2026-10-01&to=2026-10-31&status=received,partially_received&location=jwl_gurgaon&format=csv"
+
+# Everything pending now
+curl -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/rto-report?view=pendancy"
+
+# Inventory POs waiting for QR scan at Gurgaon Losung
+curl -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/rto-report?view=pendancy&stage=po_pending&location=gurgaon%20losung"
+
+# Short received units
+curl -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/rto-report?view=pendancy&stage=short_received"
+```
+
+```python
+import os, requests
+
+URL = "https://backend.kleenest.filflo.in/api/v1/external/rto-report"
+HEADERS = {"X-API-Key": os.environ["KLEENEST_API_KEY"]}
+
+def fetch_all(**params):
+    rows, page = [], 1
+    while page:
+        res = requests.get(URL, headers=HEADERS, params={**params, "page": page, "page_size": 100}, timeout=120)
+        res.raise_for_status()
+        body = res.json()
+        rows.extend(body["rows"])
+        page = body["pagination"]["next_page"]
+    return rows
+
+rto_rows = fetch_all(**{"from": "2026-10-01", "to": "2026-10-31"})
+pending_rows = fetch_all(view="pendancy")
+short_rows = fetch_all(view="pendancy", stage="short_received")
+```
+
+The columns of each view are listed in the [RTO Column Dictionary](#rto-column-dictionary) at the end of this document.
+
 ## Status Values
 
 Accepted by the replenishment reports' `status` filter, SKU-wise and Order-wise (comma-separate to combine):
@@ -488,7 +658,7 @@ Errors are returned as JSON:
 
 | HTTP | `error.code` | What to do |
 |---|---|---|
-| `400` | `invalid_date_range`, `date_range_too_large`, `invalid_date_field`, `invalid_format`, `invalid_page`, `invalid_page_size`, `invalid_location`, `invalid_include_pending_inward`, `invalid_include_pallets` | Fix the query parameters. |
+| `400` | `invalid_date_range`, `date_range_too_large`, `invalid_date_field`, `invalid_format`, `invalid_page`, `invalid_page_size`, `invalid_location`, `invalid_include_pending_inward`, `invalid_include_pallets`, `invalid_view`, `invalid_status`, `invalid_stage` | Fix the query parameters. |
 | `401` | `missing_api_key`, `invalid_api_key`, `expired_api_key` | Check the key, or ask FilFlo for a new one. |
 | `403` | `insufficient_scope` | The key is not allowed to use this endpoint. |
 | `429` | `rate_limited`, `concurrent_request` | Wait `Retry-After` seconds, or for your previous request to finish. |
@@ -714,3 +884,114 @@ Replenishment Order-wise report columns. They appear in this order in both JSON 
 | 97 | Proof of GRN | GRN copy file URL. |
 | 98 | Has Proof of Dispatch | "True" if a proof of dispatch is attached. |
 | 99 | Proof of Dispatch | Proof of dispatch file URL. |
+
+## RTO Column Dictionary
+
+RTO report columns. They appear in this order in both JSON (`columns`) and CSV (header row). Dates are `DD-Mon-YYYY` or `DD-Mon-YYYY HH:mm`, in IST. Empty cells are `""`.
+
+### `view=rto` (40 columns)
+
+One row per Return Inward x crate x Inventory PO. The Return Inward columns (1 to 17) repeat on every row of the Return Inward.
+
+| # | Column | Meaning |
+|---|---|---|
+| 1 | RTO Inward ID | Return Inward number. Every row of a Return Inward is on the same page. |
+| 2 | RTO Inward Status | Return Inward status, e.g. Pending, Rto In Transit, Partially Received, Received, Not Received, Cancelled. |
+| 3 | Warehouse | Warehouse the return comes back to (lowercase, as in FilFlo). |
+| 4 | Platform | Platform / channel of the return, as entered on the Return Inward. |
+| 5 | Credit Note No | Credit note linked to the Return Inward. |
+| 6 | Credit Note Date | Credit note date, DD-Mon-YYYY (IST). |
+| 7 | Credit Note Amount | Credit note total amount. |
+| 8 | Invoice No | Original invoice the credit note was raised against. |
+| 9 | Customer | B2B customer on the credit note. |
+| 10 | AWB Number | Return AWB number. |
+| 11 | Vehicle Number | Return vehicle number. |
+| 12 | RTO Pickup Date | RTO pickup date, DD-Mon-YYYY (IST). |
+| 13 | RTO Delivery Date | RTO delivery date at the warehouse, DD-Mon-YYYY (IST). |
+| 14 | RI Expected Qty | Units expected back on the whole Return Inward (all SKUs). Repeated on every row of the Return Inward. |
+| 15 | RI Received Qty | Units received so far on the whole Return Inward (all SKUs). Repeated on every row of the Return Inward. |
+| 16 | RI Created (IST) | When the Return Inward was created, DD-Mon-YYYY HH:mm (IST). |
+| 17 | Crate Count | Number of crates made from this Return Inward. 0 when no crate is made yet. |
+| 18 | Crate ID | Crate made at inward. Empty when the Return Inward has no crate yet. |
+| 19 | Crate Status | Handover Pending, Handover Done, Partially Processed, Sellable Po Pending or Processed. |
+| 20 | Crate Created (IST) | When the crate was made, DD-Mon-YYYY HH:mm (IST). |
+| 21 | SKU Code | Crate SKU (unit SKU). On a "No PO raised" row, every SKU in the crate, separated by " \| ". |
+| 22 | Product Name | Crate product name(s). |
+| 23 | Crate Qty (units) | Units of this SKU in the crate (whole crate on a "No PO raised" row). |
+| 24 | Sellable (units) | Units QC marked sellable. |
+| 25 | Discarded (units) | Units QC discarded. |
+| 26 | Inventory PO | Inventory PO raised when QC marked units sellable, or "No PO raised". |
+| 27 | PO Type | "B2B - RTO sellable" (case-pack PO, QR codes) or "B2C - RTO". |
+| 28 | PO Status | Inventory PO status. Fulfilled means the stock is back in inventory. |
+| 29 | PO SKU (Case Pack) | Case-pack SKU the units were packed into. |
+| 30 | Case Size | Units per case pack (1 for B2C). |
+| 31 | Ordered (Case Packs) | B2B only: case packs on the PO. |
+| 32 | Received (Case Packs) | B2B only: case packs scanned / inwarded. |
+| 33 | Ordered (Units) | Units on the PO. |
+| 34 | Received (Units) | Units inwarded on the PO. |
+| 35 | Pending (Units) | Units still to inward on the PO. |
+| 36 | QRs Linked | B2B only: QR codes linked to the PO. |
+| 37 | QRs Inwarded | B2B only: linked QR codes already inwarded. |
+| 38 | PO Created (IST) | When the PO was raised, DD-Mon-YYYY HH:mm (IST). |
+| 39 | PO Fulfilled (IST) | When the PO was fulfilled, DD-Mon-YYYY HH:mm (IST). |
+| 40 | Remark | Where the crate / PO stands, e.g. "Inwarded to stock", "QR scan / inward pending", "QC not started", "No crate yet (Rto In Transit)". |
+
+### `view=pendancy` (29 columns)
+
+One row per pending SKU (stages `all`, `crate_pending`, `handover_pending`, `qc_pending`, `po_pending`). Crate rows leave the PO columns empty; PO rows leave `Sellable (units)` and `Discarded (units)` empty.
+
+| # | Column | Meaning |
+|---|---|---|
+| 1 | Stage | Crate Pending - Handover Pending, Crate Pending - QC Pending, PO Pending (QR not scanned), or Short Received. |
+| 2 | Warehouse | Warehouse the return comes back to (lowercase, as in FilFlo). |
+| 3 | RTO Inward ID | Return Inward number. Every row of a Return Inward is on the same page. |
+| 4 | RTO Inward Status | Return Inward status, e.g. Pending, Rto In Transit, Partially Received, Received, Not Received, Cancelled. |
+| 5 | Credit Note No | Credit note linked to the Return Inward. |
+| 6 | Invoice No | Original invoice the credit note was raised against. |
+| 7 | Customer | B2B customer on the credit note. |
+| 8 | Platform | Platform / channel of the return, as entered on the Return Inward. |
+| 9 | Crate ID | Crate made at inward. Empty when the Return Inward has no crate yet. |
+| 10 | Crate Status | Handover Pending, Handover Done, Partially Processed, Sellable Po Pending or Processed. |
+| 11 | Inventory PO | Inventory PO raised when QC marked units sellable, or "No PO raised". |
+| 12 | PO Type | "B2B - RTO sellable" (case-pack PO, QR codes) or "B2C - RTO". |
+| 13 | PO Status | Inventory PO status. Fulfilled means the stock is back in inventory. |
+| 14 | SKU Code | Crate SKU (unit SKU). On a "No PO raised" row, every SKU in the crate, separated by " \| ". |
+| 15 | Product Name | Crate product name(s). |
+| 16 | Received Qty (units) | Crate rows: units of the SKU in the crate. PO rows: units on the PO (case packs x case size). |
+| 17 | Sellable (units) | Units QC marked sellable. |
+| 18 | Discarded (units) | Units QC discarded. |
+| 19 | PO SKU (Case Pack) | Case-pack SKU the units were packed into. |
+| 20 | Case Size | Units per case pack (1 for B2C). |
+| 21 | PO Ordered (Case Packs) | PO rows: case packs on the PO. |
+| 22 | PO Received (Case Packs) | PO rows: case packs inwarded. |
+| 23 | PO Pending (Case Packs) | PO rows: case packs still to inward. |
+| 24 | QRs Linked | B2B only: QR codes linked to the PO. |
+| 25 | QRs Inwarded | B2B only: linked QR codes already inwarded. |
+| 26 | Pending Units | Units not back in stock yet: not yet QC-checked (crate rows) or not yet inwarded (PO rows). |
+| 27 | Received On (IST) | When the crate was made (the inward), DD-Mon-YYYY HH:mm (IST). The date filter uses this date. |
+| 28 | Age (days) | Days since Received On (short rows: since the last inward). |
+| 29 | Action Needed | Next step: Handover crate to QC, QC: mark Sellable or Discard, or Scan QR & inward on Inventory PO. |
+
+### `view=pendancy&stage=short_received` (17 columns)
+
+One row per SKU of a partially received Return Inward that is still short.
+
+| # | Column | Meaning |
+|---|---|---|
+| 1 | Stage | Crate Pending - Handover Pending, Crate Pending - QC Pending, PO Pending (QR not scanned), or Short Received. |
+| 2 | Warehouse | Warehouse the return comes back to (lowercase, as in FilFlo). |
+| 3 | RTO Inward ID | Return Inward number. Every row of a Return Inward is on the same page. |
+| 4 | RTO Inward Status | Return Inward status, e.g. Pending, Rto In Transit, Partially Received, Received, Not Received, Cancelled. |
+| 5 | Credit Note No | Credit note linked to the Return Inward. |
+| 6 | Invoice No | Original invoice the credit note was raised against. |
+| 7 | Customer | B2B customer on the credit note. |
+| 8 | Platform | Platform / channel of the return, as entered on the Return Inward. |
+| 9 | AWB Number | Return AWB number. |
+| 10 | Crate IDs | Short rows: crates already made from the Return Inward, separated by " \| ". |
+| 11 | SKU Code | Crate SKU (unit SKU). On a "No PO raised" row, every SKU in the crate, separated by " \| ". |
+| 12 | Product Name | Crate product name(s). |
+| 13 | Expected Qty | Short rows: units expected for the SKU. |
+| 14 | Received Qty | Short rows: units received for the SKU. |
+| 15 | Short Qty | Short rows: units expected but not received yet. |
+| 16 | Last Inward On (IST) | Short rows: last inward on the Return Inward. The date filter uses this date. |
+| 17 | Age (days) | Days since Received On (short rows: since the last inward). |
