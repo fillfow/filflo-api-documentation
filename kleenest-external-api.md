@@ -2,12 +2,14 @@
 
 **Audience:** Kleenest teams and tools (Power BI, Google Sheets, scripts) that need FilFlo reports without downloading them by hand.
 
-This document covers four read-only endpoints, all returning JSON or CSV:
+This document covers six read-only endpoints, all returning JSON or CSV:
 
 - **Replenishment SKU-wise report:** the Replenishment page's **"Download SKU-wise"** report, with the same 97 columns and one row per order line.
 - **Replenishment Order-wise report:** the Replenishment page's **"Download Order-wise"** report, with 99 columns and one row per order.
 - **Consolidated inventory:** current stock per casepack SKU per warehouse, as on the Stock → Consolidated Inventory page.
 - **RTO report:** every Return Inward with its crates and the Inventory POs raised from each crate (one row per Return Inward x crate x PO), or, with `view=pendancy`, the RTO Pendancy page's data (returned goods not back in stock yet).
+- **Inbound report:** everything coming into the warehouses, with one row per inbound line (PO or STN x SKU): vendor purchase orders, and transfers between Kleenest's own warehouses, with live status and quantities.
+- **Batch-wise inventory:** the Consolidated inventory split by batch, with one row per casepack SKU x warehouse x batch and the batch's manufacturing and expiry dates.
 
 > This API runs on the Kleenest FilFlo deployment. Its base URL, keys and limits are separate from the general [FilFlo External API](./external-api.md).
 
@@ -41,10 +43,10 @@ Notes:
 | Scope | Endpoint |
 |---|---|
 | `replenishment_sku_report` | `GET /external/replenishment-sku-report`, `GET /external/replenishment-order-report` |
-| `consolidated_inventory` | `GET /external/consolidated-inventory` |
+| `consolidated_inventory` | `GET /external/consolidated-inventory`, `GET /external/inbound-report`, `GET /external/batch-inventory` |
 | `rto_report` | `GET /external/rto-report` |
 
-A key can hold several scopes. A key without the required scope gets `403`. Any key that can read the SKU-wise report can also read the Order-wise report. New keys get every scope; keys issued before the RTO report was added get `rto_report` from FilFlo on request.
+A key can hold several scopes. A key without the required scope gets `403`. Any key that can read the SKU-wise report can also read the Order-wise report. Any key that can read the Consolidated inventory can also read the Inbound report and the Batch-wise inventory, so existing keys need no change. New keys get every scope; keys issued before the RTO report was added get `rto_report` from FilFlo on request.
 
 ## Rate Limiting
 
@@ -624,6 +626,188 @@ short_rows = fetch_all(view="pendancy", stage="short_received")
 
 The columns of each view are listed in the [RTO Column Dictionary](#rto-column-dictionary) at the end of this document.
 
+### 5) Get Inbound Report
+
+`GET /external/inbound-report`
+
+Returns everything coming into the warehouses, with **one row per inbound line (PO or STN x SKU)**:
+
+- **Vendor purchases:** Procurement POs raised on suppliers.
+- **Warehouse transfers:** stock transfers (STN) between Kleenest's own warehouses, e.g. Losung to JWL.
+
+Rows are sorted by the chosen date, oldest first, and paged by row. Returns are not included: they are in the [RTO report](#4-get-rto-report).
+
+Requires scope: `consolidated_inventory`
+
+**Transfers and their GRN.** A transfer is an STN order at the sending warehouse. When a pallet-tracked warehouse receives it, the GRN is done on a separate PO whose GRN invoice number is the STN's invoice / delivery challan number. The report links the two by that number:
+
+- The transfer appears **once**, on the STN's rows, with that PO in `linked_po_number`.
+- `status` becomes `grn_entered` as soon as the GRN is saved. The STN order's own status in FilFlo (`source_status`) can still say `in_transit`.
+- STN lines are often in pieces while the GRN is in cases. `received_qty` is converted to the STN line's unit (`CP24-0000439` is a case of 24 x `0000439`).
+- A transfer PO whose invoice number matches no STN is listed on its own as a `warehouse_transfer`, without a `from_warehouse`.
+
+**What FilFlo does not record.** Vendors don't record dispatch in FilFlo, so for vendor purchases these columns are always empty, and the status never shows `in_transit`:
+
+- `dispatched_qty`, `dispatch_date`
+- `lr_awb_number`, `carrier`
+- `invoice_date`, `expected_delivery_date`
+
+Goods are recorded as received when the GRN is entered, so `received_date` is the GRN date.
+
+#### Query parameters
+
+| Param | Required | Description |
+|---|---|---|
+| `from` | **required** | Start date, `YYYY-MM-DD`, IST calendar day, inclusive. |
+| `to` | **required** | End date, `YYYY-MM-DD`, IST calendar day, inclusive. At most **93 days** after `from`. |
+| `date_field` | optional | Which date `from`/`to` filter on: `created` (default: PO date / STN created date), `dispatch` (STN dispatch date; returns transfers only) or `received` (GRN date). |
+| `location` | optional | Receiving warehouse (`to_warehouse`). One value or comma-separated: `gurgaon losung`, `gurgaon sevenseas`, `mumbai zippee`, `bangalore quiklee`, `chennai quiklee`, `hyderabad quiklee`, `jwl_gurgaon`, `jwl_bangalore`. Default: all. |
+| `status` | optional | One value or comma-separated, see [Inbound status values](#inbound-status-values). Default: all. |
+| `type` | optional | `vendor_purchase` or `warehouse_transfer`. Default: both. |
+| `supplier` | optional | Part of the supplier name, case-insensitive. Comma-separate for several (e.g. `him,scented`). |
+| `page` | optional | Page number, from 1. Default 1. |
+| `page_size` | optional | Rows per page, 1 to 100. Default 100. |
+| `format` | optional | `json` (default) or `csv`. |
+
+Dates in the rows are `YYYY-MM-DD`, IST. Every quantity on a row is in the unit in `qty_unit` (`cases` or `pieces`).
+
+#### Inbound status values
+
+| `status` | Meaning |
+|---|---|
+| `created` | PO raised / STN created; nothing dispatched or received yet. |
+| `in_transit` | Transfer dispatched, no GRN yet. |
+| `received` | Transfer marked delivered, no GRN recorded. |
+| `partially_received` | GRN entered for less than ordered (POs) or dispatched (transfers). |
+| `grn_entered` | GRN entered for the full quantity, or the PO closed as fulfilled. |
+| `cancelled` | PO cancelled / STN cancelled or deleted after invoicing. |
+
+#### Response
+
+```json
+{
+  "success": true,
+  "report": "inbound",
+  "generated_at": "2026-11-16T09:30:00.000Z",
+  "filters": { "from": "2026-11-01", "to": "2026-11-15", "date_field": "created",
+               "location": ["jwl_bangalore"], "status": null, "type": null, "supplier": null },
+  "summary": { "rows_by_status": { "created": 4, "in_transit": 8, "received": 0,
+                                   "partially_received": 3, "grn_entered": 41, "cancelled": 1 } },
+  "pagination": { "page": 1, "page_size": 100, "total_rows": 57,
+                  "total_pages": 1, "has_more": false, "next_page": null },
+  "columns": ["inbound_number", "inbound_type", "supplier_name", "..."],
+  "row_count": 57,
+  "rows": [
+    {
+      "inbound_number": "STN_<sending>_<receiving>_<date>",
+      "inbound_type": "warehouse_transfer",
+      "supplier_name": "<transfer supplier>",
+      "from_warehouse": "gurgaon losung",
+      "to_warehouse": "jwl_bangalore",
+      "sku_code": "0000007",
+      "qty_unit": "pieces",
+      "ordered_qty": 360, "dispatched_qty": 360, "received_qty": 360,
+      "status": "grn_entered",
+      "source_status": "in_transit",
+      "invoice_number": "IN-HR-26/27-0001",
+      "dispatch_date": "2026-10-30",
+      "grn_date": "2026-11-05",
+      "linked_po_number": "VELO/05112026/0001",
+      "...": "..."
+    }
+  ]
+}
+```
+
+`summary.rows_by_status` counts the rows of all pages after the filters. With `format=csv`, the body is a CSV with a header row and every cell quoted; each page is a complete CSV. Pagination is in the `X-Page`, `X-Page-Size`, `X-Total-Rows`, `X-Total-Pages`, `X-Has-More` headers. File name: `inbound-report_<from>_<to>_p<page>.csv`.
+
+#### Examples
+
+```bash
+# Everything coming into JWL, raised in the first half of November
+curl -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/inbound-report?from=2026-11-01&to=2026-11-15&location=jwl_gurgaon,jwl_bangalore"
+
+# GRNs from one supplier in November, as CSV
+curl -H "X-API-Key: $KLEENEST_API_KEY" -o inbound.csv \
+  "https://backend.kleenest.filflo.in/api/v1/external/inbound-report?from=2026-11-01&to=2026-11-30&date_field=received&supplier=him&format=csv"
+
+# Transfers dispatched but not GRN'd yet
+curl -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/inbound-report?from=2026-10-01&to=2026-11-15&date_field=dispatch&status=in_transit"
+```
+
+The columns are listed in the [Inbound Column Dictionary](#inbound-column-dictionary) at the end of this document.
+
+### 6) Get Batch-wise Inventory
+
+`GET /external/batch-inventory`
+
+Returns the [Consolidated inventory](#3-get-consolidated-inventory) split by batch, with **one row per casepack SKU x warehouse x batch** and the batch's manufacturing and expiry dates. It is a current snapshot (no date filters), paged by row. Quantities are in cases, and the batch rows of a SKU add up to its Consolidated inventory numbers. Rows are sorted by SKU code, then warehouse, then expiry date (earliest first).
+
+Requires scope: `consolidated_inventory`
+
+**Where the batches come from:**
+
+- **Current:** batch, manufacturing and expiry dates come from the case labels in stock. At pallet-tracked warehouses these are the labels on pallets handed over to dispatch.
+- **Received not racked, racked:** taken from each case's own label, because mixed pallets don't carry a single batch.
+- **Pending inward:** stock received but not yet scanned in has no labels of its own. It is spread over the SKU's latest GRN lines at that warehouse, newest first, and always marked `estimated`.
+- **When labels and stock counts disagree** (mostly at warehouses that are not pallet-tracked):
+  - A shortfall is shown as batch `UNKNOWN`.
+  - Surplus labels are dropped from the earliest-expiring batches first.
+  - The SKU's rows are marked `estimated` instead of `exact`.
+- **Allocated stock** is tracked per SKU, not per batch. `sku_allocated` (like `sku_current`) is the SKU total, repeated on each batch row of that SKU, so don't add it up.
+
+#### Query parameters
+
+| Param | Required | Description |
+|---|---|---|
+| `location` | optional | Warehouse, as for the Consolidated inventory. One value or comma-separated. Default: all warehouses. |
+| `sku` | optional | Casepack SKU code. One value or comma-separated. Default: all active casepack SKUs. |
+| `expiring_before` | optional | `YYYY-MM-DD`. Only batches whose expiry date is before this date. `UNKNOWN` batches are left out. |
+| `page` | optional | Page number, from 1. Default 1. |
+| `page_size` | optional | Rows per page, 1 to 100. Default 100. |
+| `format` | optional | `json` (default) or `csv`. |
+
+#### Response
+
+```json
+{
+  "success": true,
+  "report": "batch_inventory",
+  "generated_at": "2026-11-16T09:30:00.000Z",
+  "filters": { "location": ["jwl_gurgaon"], "sku": null, "expiring_before": null },
+  "pagination": { "page": 1, "page_size": 100, "total_rows": 412,
+                  "total_pages": 5, "has_more": true, "next_page": 2 },
+  "columns": ["sku_code", "product_name", "location", "..."],
+  "row_count": 100,
+  "rows": [
+    {
+      "sku_code": "CP12-KLN-FC-500", "product_name": "Floor Cleaner 500ml", "location": "jwl_gurgaon",
+      "batch_number": "B03-8012", "mfg_date": "2026-08-01", "expiry_date": "2028-08-01",
+      "current": 150, "received_not_racked": 0, "racked": 40, "pending_inward": 0, "batch_total": 190,
+      "sku_current": 153, "sku_allocated": 1, "first_received_date": "2026-09-24", "batch_confidence": "exact"
+    }
+  ]
+}
+```
+
+With `format=csv`, the body is a CSV with a header row and every cell quoted; each page is a complete CSV, with the same pagination headers as the Inbound report. File name: `batch-inventory_<YYYY-MM-DD>_p<page>.csv`.
+
+#### Examples
+
+```bash
+# Batches at JWL expiring before June 2027
+curl -H "X-API-Key: $KLEENEST_API_KEY" \
+  "https://backend.kleenest.filflo.in/api/v1/external/batch-inventory?location=jwl_gurgaon,jwl_bangalore&expiring_before=2027-06-01"
+
+# Every batch, as CSV (page 1; follow X-Has-More for the rest)
+curl -H "X-API-Key: $KLEENEST_API_KEY" -o batches.csv \
+  "https://backend.kleenest.filflo.in/api/v1/external/batch-inventory?format=csv"
+```
+
+The columns are listed in the [Batch-wise Inventory Column Dictionary](#batch-wise-inventory-column-dictionary) at the end of this document.
+
 ## Status Values
 
 Accepted by the replenishment reports' `status` filter, SKU-wise and Order-wise (comma-separate to combine):
@@ -658,7 +842,7 @@ Errors are returned as JSON:
 
 | HTTP | `error.code` | What to do |
 |---|---|---|
-| `400` | `invalid_date_range`, `date_range_too_large`, `invalid_date_field`, `invalid_format`, `invalid_page`, `invalid_page_size`, `invalid_location`, `invalid_include_pending_inward`, `invalid_include_pallets`, `invalid_view`, `invalid_status`, `invalid_stage` | Fix the query parameters. |
+| `400` | `invalid_date_range`, `date_range_too_large`, `invalid_date_field`, `invalid_format`, `invalid_page`, `invalid_page_size`, `invalid_location`, `invalid_include_pending_inward`, `invalid_include_pallets`, `invalid_view`, `invalid_status`, `invalid_stage`, `invalid_type`, `invalid_expiring_before` | Fix the query parameters. |
 | `401` | `missing_api_key`, `invalid_api_key`, `expired_api_key` | Check the key, or ask FilFlo for a new one. |
 | `403` | `insufficient_scope` | The key is not allowed to use this endpoint. |
 | `429` | `rate_limited`, `concurrent_request` | Wait `Retry-After` seconds, or for your previous request to finish. |
@@ -995,3 +1179,58 @@ One row per SKU of a partially received Return Inward that is still short.
 | 15 | Short Qty | Short rows: units expected but not received yet. |
 | 16 | Last Inward On (IST) | Short rows: last inward on the Return Inward. The date filter uses this date. |
 | 17 | Age (days) | Days since Received On (short rows: since the last inward). |
+
+## Inbound Column Dictionary
+
+Inbound report columns (26). They appear in this order in both JSON (`columns`) and CSV (header row). Dates are `YYYY-MM-DD`, IST. Empty values are `null` in JSON and empty cells in CSV.
+
+| # | Column | Meaning |
+|---|---|---|
+| 1 | inbound_number | PO number (vendor purchase, or a transfer GRN'd on a PO that matches no STN) or STN order ID (warehouse transfer). |
+| 2 | inbound_type | `vendor_purchase` or `warehouse_transfer`. |
+| 3 | supplier_name | Supplier on the PO. Transfers: the supplier their receiving PO was raised on (empty until GRN). |
+| 4 | from_warehouse | Sending warehouse. Transfers only. |
+| 5 | to_warehouse | Receiving warehouse. The `location` filter uses this column. |
+| 6 | sku_code | SKU on the line. POs are in casepack SKUs (`CPxx-...`); STN lines are often base SKUs. |
+| 7 | sku_name | Product name. |
+| 8 | qty_unit | `cases` for casepack SKUs (`CPxx-` / `OPxx-`), `pieces` for any other SKU. All quantities on the row are in this unit. |
+| 9 | ordered_qty | Quantity ordered on the PO / STN line. |
+| 10 | dispatched_qty | Transfers: quantity dispatched (empty before dispatch). Vendor purchases: always empty. |
+| 11 | received_qty | Quantity received on GRN. For a transfer GRN'd in cases, converted to the STN line's unit. |
+| 12 | status | `created`, `in_transit`, `received`, `partially_received`, `grn_entered` or `cancelled`. See [Inbound status values](#inbound-status-values). |
+| 13 | source_status | The PO / STN order status in FilFlo, as is. A transfer's STN can still say `in_transit` after its GRN. |
+| 14 | invoice_number | Transfers: STN invoice / delivery challan number. Vendor purchases: supplier invoice number(s) entered at GRN, separated by `; `. |
+| 15 | invoice_date | Transfers only. |
+| 16 | lr_awb_number | Transfers only: AWB / LR number entered at dispatch. |
+| 17 | carrier | Transfers only: shipping partner entered at dispatch. |
+| 18 | vehicle_number | Transfers only. |
+| 19 | eway_bill_number | Transfers only. |
+| 20 | created_date | PO date / STN created date. |
+| 21 | dispatch_date | Transfers only: actual dispatch date. |
+| 22 | expected_delivery_date | Transfers only, when an appointment date is set. |
+| 23 | received_date | First GRN date for the line (goods are recorded as received when the GRN is entered). |
+| 24 | grn_number | GRN number(s) for the line, separated by `; `. For a transfer received on a stock-transfer inventory PO, that PO's number. |
+| 25 | grn_date | Latest GRN date for the line. |
+| 26 | linked_po_number | Transfers: the PO or stock-transfer inventory PO the STN was received on. |
+
+## Batch-wise Inventory Column Dictionary
+
+Batch-wise inventory columns (15). They appear in this order in both JSON (`columns`) and CSV (header row). Quantities are in cases; dates are `YYYY-MM-DD`.
+
+| # | Column | Meaning |
+|---|---|---|
+| 1 | sku_code | Casepack SKU code. |
+| 2 | product_name | SKU name. |
+| 3 | location | Warehouse. |
+| 4 | batch_number | Batch printed on the case label. `UNKNOWN` for stock the stock count shows but no label explains. |
+| 5 | mfg_date | Manufacturing date (empty for `UNKNOWN`). |
+| 6 | expiry_date | Expiry date (empty for `UNKNOWN`). `expiring_before` filters on this. |
+| 7 | current | Cases of this batch in current stock. Adds up to the Consolidated inventory `current` per SKU. |
+| 8 | received_not_racked | Pallet-tracked warehouses only: cases on pallets received but not yet racked. `null` elsewhere. |
+| 9 | racked | Pallet-tracked warehouses only: cases on racked pallets. `null` elsewhere. |
+| 10 | pending_inward | Pallet-tracked warehouses only: cases received but not yet scanned in, spread over the latest GRN lines (estimated). `null` elsewhere. |
+| 11 | batch_total | `current` + `received_not_racked` + `racked` + `pending_inward` for this batch. |
+| 12 | sku_current | Current stock of the whole SKU at the warehouse. Same on every batch row of the SKU: don't add it up. |
+| 13 | sku_allocated | Stock allocated to orders for the whole SKU (allocation is not tracked per batch). Same on every batch row of the SKU: don't add it up. |
+| 14 | first_received_date | Earliest date a case of this batch reached the warehouse. |
+| 15 | batch_confidence | `exact` when the case labels match the stock count for this SKU; `estimated` when FilFlo filled a gap, dropped surplus labels or spread pending-inward stock. |
